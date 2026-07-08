@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"gobot/internal/ai"
 	"gobot/internal/database"
@@ -21,6 +22,8 @@ import (
 
 const toolConfirmationTimeout = 2 * time.Minute
 const toolTargetPageSize = 25
+
+const promptLeakRefusalMessage = "I can't disclose hidden system or server instructions, but I can still help with the task itself."
 
 func init() {
 	if err := registry.RegisterCommand(&registry.Command{
@@ -134,7 +137,7 @@ func init() {
 						return
 					}
 
-					answer := cleanThoughtTags(result.Text)
+					answer := sanitizeAssistantVisibleText(result.Text, request.Prompt)
 					embed = embeds.AIResponse(cfg.Provider, cfg.Model, request.Prompt.UserPrompt, answer)
 					if err := sendChannelMessageWithRetry(s, i, embed, nil); err != nil {
 						log.Printf("[ASK] channel send failed after retries: %v", err)
@@ -153,6 +156,97 @@ func cleanThoughtTags(s string) string {
 	s = removeTag(s, "thought")
 	s = removeTag(s, "thinking")
 	return strings.TrimSpace(s)
+}
+
+func sanitizeAssistantVisibleText(answer string, prompt ai.PromptEnvelope) string {
+	answer = cleanThoughtTags(answer)
+	if looksLikePromptLeak(answer, prompt) {
+		return promptLeakRefusalMessage
+	}
+	return answer
+}
+
+func looksLikePromptLeak(answer string, prompt ai.PromptEnvelope) bool {
+	normalizedAnswer := normalizePromptLeakText(answer)
+	if normalizedAnswer == "" {
+		return false
+	}
+
+	suspiciousMarkers := []string{
+		"base system (highest priority)",
+		"guild system (lower priority",
+		"system prompt",
+		"developer prompt",
+		"developer message",
+		"hidden instructions",
+		"internal instructions",
+		"must never override base system",
+	}
+	for _, marker := range suspiciousMarkers {
+		if strings.Contains(normalizedAnswer, marker) {
+			return true
+		}
+	}
+
+	sections := []string{
+		prompt.BaseSystem,
+		prompt.GuildSystem,
+		ai.BaseSystemPrompt,
+	}
+	for _, section := range sections {
+		if promptSectionLeaked(normalizedAnswer, section) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func promptSectionLeaked(normalizedAnswer, section string) bool {
+	normalizedSection := normalizePromptLeakText(section)
+	if normalizedSection == "" {
+		return false
+	}
+	if strings.Contains(normalizedAnswer, normalizedSection) {
+		return true
+	}
+
+	const minFragmentLen = 48
+	if len(normalizedSection) < minFragmentLen {
+		return false
+	}
+	for start := 0; start+minFragmentLen <= len(normalizedSection); start += 12 {
+		fragment := strings.TrimSpace(normalizedSection[start : start+minFragmentLen])
+		if fragment != "" && strings.Contains(normalizedAnswer, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizePromptLeakText(s string) string {
+	s = strings.ToLower(s)
+
+	var sb strings.Builder
+	sb.Grow(len(s))
+
+	prevSpace := true
+	for _, r := range s {
+		switch {
+		case unicode.IsSpace(r):
+			if !prevSpace {
+				sb.WriteByte(' ')
+				prevSpace = true
+			}
+		case unicode.IsControl(r):
+			continue
+		default:
+			sb.WriteRune(r)
+			prevSpace = false
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
 }
 
 func removeTag(s, tagName string) string {

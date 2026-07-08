@@ -318,10 +318,11 @@ func presentGuildPromptFlow(s *discordgo.Session, i *discordgo.InteractionCreate
 			if err != nil {
 				var validationErr *ai.GuildSystemPromptValidationError
 				if errors.As(err, &validationErr) {
+					rejectedPrompt := modalTextInputValue(data, guildPromptInputCustomID)
 					auditInteraction(ic, "config_prompt_set", "error", map[string]any{
 						"reason":        "content_rejected",
 						"validation":    validationErr.Code,
-						"prompt_length": utf8.RuneCountInString(ai.NormalizeGuildSystemPrompt(modalTextInputValue(data, guildPromptInputCustomID))),
+						"prompt_length": utf8.RuneCountInString(rejectedPrompt),
 					})
 					_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -416,7 +417,6 @@ func presentGuildPromptFlow(s *discordgo.Session, i *discordgo.InteractionCreate
 }
 
 func saveGuildSystemPrompt(d *database.Database, guildID, prompt string) (string, error) {
-	prompt = ai.NormalizeGuildSystemPrompt(prompt)
 	if err := ai.ValidateGuildSystemPrompt(prompt); err != nil {
 		return "", err
 	}

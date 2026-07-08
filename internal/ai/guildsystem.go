@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 type GuildSystemPromptValidationError struct {
@@ -59,8 +61,8 @@ func NormalizeGuildSystemPrompt(prompt string) string {
 }
 
 func ValidateGuildSystemPrompt(prompt string) error {
-	prompt = NormalizeGuildSystemPrompt(prompt)
-	if prompt == "" {
+	normalizedPrompt := normalizeGuildSystemPromptLineEndings(prompt)
+	if strings.TrimSpace(normalizedPrompt) == "" {
 		return &GuildSystemPromptValidationError{
 			Code:    "empty_prompt",
 			Message: "The guild system prompt cannot be empty. Use Clear if you want to remove it.",
@@ -79,7 +81,7 @@ func ValidateGuildSystemPrompt(prompt string) error {
 		}
 	}
 
-	for _, r := range prompt {
+	for _, r := range normalizedPrompt {
 		if unicode.IsControl(r) && r != '\n' {
 			return &GuildSystemPromptValidationError{
 				Code:    "control_characters",
@@ -88,7 +90,7 @@ func ValidateGuildSystemPrompt(prompt string) error {
 		}
 	}
 
-	if matchesGuildSystemDenylist(prompt) {
+	if matchesGuildSystemDenylist(normalizedPrompt) {
 		return &GuildSystemPromptValidationError{
 			Code:    "denylist_match",
 			Message: "This content appears to be trying to overwrite system instructions. Remove system/developer-style directives and try again.",
@@ -99,10 +101,115 @@ func ValidateGuildSystemPrompt(prompt string) error {
 }
 
 func matchesGuildSystemDenylist(prompt string) bool {
+	prompt = normalizeGuildSystemPromptForDenylist(prompt)
 	for _, rule := range GuildSystemPromptDenyRules {
 		if rule.Pattern.MatchString(prompt) {
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeGuildSystemPromptLineEndings(prompt string) string {
+	prompt = strings.ReplaceAll(prompt, "\r\n", "\n")
+	return strings.ReplaceAll(prompt, "\r", "\n")
+}
+
+func normalizeGuildSystemPromptForDenylist(prompt string) string {
+	prompt = normalizeGuildSystemPromptLineEndings(prompt)
+	prompt = norm.NFKC.String(prompt)
+
+	var sb strings.Builder
+	sb.Grow(len(prompt))
+
+	prevSpace := true
+	for _, r := range prompt {
+		if mapped, ok := guildSystemPromptHomoglyphs[r]; ok {
+			r = mapped
+		}
+
+		switch {
+		case shouldStripInvisiblePromptRune(r):
+			continue
+		case unicode.IsSpace(r):
+			if !prevSpace {
+				sb.WriteByte(' ')
+				prevSpace = true
+			}
+		case unicode.IsControl(r):
+			continue
+		default:
+			sb.WriteRune(unicode.ToLower(r))
+			prevSpace = false
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+func shouldStripInvisiblePromptRune(r rune) bool {
+	if unicode.Is(unicode.Cf, r) {
+		return true
+	}
+	switch r {
+	case '\u00ad', '\u034f', '\u180e', '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff':
+		return true
+	default:
+		return false
+	}
+}
+
+var guildSystemPromptHomoglyphs = map[rune]rune{
+	'\u0391': 'a',
+	'\u03b1': 'a',
+	'\u0410': 'a',
+	'\u0430': 'a',
+	'\u0392': 'b',
+	'\u0412': 'b',
+	'\u03f2': 'c',
+	'\u0421': 'c',
+	'\u0441': 'c',
+	'\u0395': 'e',
+	'\u03b5': 'e',
+	'\u0415': 'e',
+	'\u0435': 'e',
+	'\u0397': 'h',
+	'\u041d': 'h',
+	'\u043d': 'h',
+	'\u0399': 'i',
+	'\u03b9': 'i',
+	'\u0406': 'i',
+	'\u0456': 'i',
+	'\u039a': 'k',
+	'\u03ba': 'k',
+	'\u041a': 'k',
+	'\u043a': 'k',
+	'\u039c': 'm',
+	'\u03bc': 'm',
+	'\u041c': 'm',
+	'\u043c': 'm',
+	'\u039d': 'n',
+	'\u03bd': 'n',
+	'\u039f': 'o',
+	'\u03bf': 'o',
+	'\u041e': 'o',
+	'\u043e': 'o',
+	'\u03a1': 'p',
+	'\u03c1': 'p',
+	'\u0420': 'p',
+	'\u0440': 'p',
+	'\u03a4': 't',
+	'\u03c4': 't',
+	'\u0422': 't',
+	'\u0442': 't',
+	'\u03a5': 'y',
+	'\u03c5': 'y',
+	'\u0423': 'y',
+	'\u0443': 'y',
+	'\u03a7': 'x',
+	'\u03c7': 'x',
+	'\u0425': 'x',
+	'\u0445': 'x',
+	'\u0408': 'j',
+	'\u0458': 'j',
 }

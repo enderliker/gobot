@@ -97,14 +97,15 @@ func TestOwnerOnlyAccessFailureAllowsOwnerWithoutSpecialRole(t *testing.T) {
 	}
 }
 
-func TestSaveGuildSystemPromptPersistsNormalizedPrompt(t *testing.T) {
+func TestSaveGuildSystemPromptPreservesOriginalFormatting(t *testing.T) {
 	d := newSlashTestDatabase(t)
 
-	saved, err := saveGuildSystemPrompt(d, "guild-1", "Prefer concise answers.\r\nMention server channels.")
+	original := "Prefer concise answers.\r\n\r\nMention server channels."
+	saved, err := saveGuildSystemPrompt(d, "guild-1", original)
 	if err != nil {
 		t.Fatalf("saveGuildSystemPrompt: %v", err)
 	}
-	if saved != "Prefer concise answers.\nMention server channels." {
+	if saved != original {
 		t.Fatalf("unexpected saved prompt: %q", saved)
 	}
 

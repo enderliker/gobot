@@ -8,6 +8,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.12.3
+	golang.org/x/text v0.40.0
 	modernc.org/sqlite v1.53.0
 )
 
