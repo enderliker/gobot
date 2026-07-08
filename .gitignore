@@ -1,0 +1,30 @@
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Local deploy/build artifacts
+/build/
+/app
+/gobot
+/gobot.db
+/*.db
+/*.sqlite
+/*.sqlite3
+/*.log
+/coverage.out
+
+# Go local caches
+/.gocache/
+
+# Python venv used for local tooling
+/.venv/
+/__pycache__/
+
+# Local agent/editor metadata
+/.agents/
+/.codex/
+/.repo-git/
+
+# Sensitive local deploy script with embedded credentials
+/deploy.py

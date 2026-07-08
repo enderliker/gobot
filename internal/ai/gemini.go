@@ -1,0 +1,226 @@
+package ai
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
+// parseGeminiError extracts the human-readable message from a Gemini API error
+// response body. Falls back to the raw body if parsing fails.
+func parseGeminiError(status int, body []byte) error {
+	var apiErr struct {
+		Error struct {
+			Message string `json:"message"`
+			Status  string `json:"status"`
+			Code    int    `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Error.Message != "" {
+		return fmt.Errorf("gemini (%d %s): %s", status, apiErr.Error.Status, apiErr.Error.Message)
+	}
+	return fmt.Errorf("gemini: status %d: %s", status, body)
+}
+
+type Gemini struct{}
+
+func NewGemini() *Gemini { return &Gemini{} }
+
+func (g *Gemini) Name() string { return "Gemini" }
+
+const geminiMaxOutputTokens = 1024
+
+func (g *Gemini) Validate(ctx context.Context, apiKey string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildGeminiModelsURL(apiKey), nil)
+	if err != nil {
+		return sanitizeProviderError(err, apiKey)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return sanitizeProviderError(err, apiKey)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return sanitizeProviderError(parseGeminiError(resp.StatusCode, body), apiKey)
+	}
+	return nil
+}
+
+func (g *Gemini) ListModels(ctx context.Context, apiKey string) ([]string, error) {
+	return []string{
+		"gemini-3.5-pro",
+		"gemini-3.5-flash",
+		"gemini-3.1-pro",
+		"gemini-3.1-flash-lite",
+		"gemini-2.5-pro",
+		"gemini-2.5-flash",
+		"gemma-4",
+		"gemma-2-27b-it",
+		"gemma-2-9b-it",
+	}, nil
+}
+
+func (g *Gemini) Ask(ctx context.Context, apiKey, model string, prompt PromptEnvelope, tools []ToolDefinition) (*AskResult, error) {
+	if model == "" {
+		model = "gemini-3.5-flash"
+	}
+	payload := map[string]any{
+		"contents": []map[string]any{
+			{
+				"parts": []map[string]string{
+					{"text": prompt.UserPrompt},
+				},
+			},
+		},
+		"systemInstruction": map[string]any{
+			"parts": []map[string]string{
+				{"text": buildGeminiSystemPrompt(prompt)},
+			},
+		},
+		"generationConfig": map[string]any{
+			"maxOutputTokens": geminiMaxOutputTokens,
+		},
+	}
+	if len(tools) > 0 {
+		payload["tools"] = []map[string]any{
+			{
+				"functionDeclarations": geminiTools(tools),
+			},
+		}
+	}
+
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildGeminiGenerateURL(model, apiKey), bytes.NewReader(body))
+	if err != nil {
+		return nil, sanitizeProviderError(err, apiKey)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, sanitizeProviderError(err, apiKey)
+	}
+	defer resp.Body.Close()
+
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, sanitizeProviderError(parseGeminiError(resp.StatusCode, b), apiKey)
+	}
+
+	var result struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text         string         `json:"text"`
+					Thought      bool           `json:"thought"`
+					FunctionCall *geminiToolUse `json:"functionCall"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, sanitizeProviderError(fmt.Errorf("gemini: parse: %w", err), apiKey)
+	}
+	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
+		return nil, sanitizeProviderError(fmt.Errorf("gemini: no candidates"), apiKey)
+	}
+
+	var sb strings.Builder
+	for _, part := range result.Candidates[0].Content.Parts {
+		if part.FunctionCall != nil && part.FunctionCall.Name != "" {
+			call, err := ParseToolArguments(part.FunctionCall.Name, part.FunctionCall.Args)
+			if err != nil {
+				return nil, sanitizeProviderError(err, apiKey)
+			}
+			return &AskResult{ToolCall: call}, nil
+		}
+		if !part.Thought {
+			sb.WriteString(part.Text)
+		}
+	}
+
+	return &AskResult{Text: cleanThoughtTags(sb.String())}, nil
+}
+
+// cleanThoughtTags strips `<thought>...</thought>` and `<thinking>...</thinking>`
+// tag blocks (closed or unclosed due to truncation) from the model output.
+func cleanThoughtTags(s string) string {
+	s = removeTag(s, "thought")
+	s = removeTag(s, "thinking")
+	return strings.TrimSpace(s)
+}
+
+func removeTag(s, tagName string) string {
+	startTag := "<" + tagName + ">"
+	endTag := "</" + tagName + ">"
+
+	for {
+		startIdx := strings.Index(strings.ToLower(s), startTag)
+		if startIdx == -1 {
+			break
+		}
+		endIdx := strings.Index(strings.ToLower(s), endTag)
+		if endIdx != -1 && endIdx > startIdx {
+			s = s[:startIdx] + s[endIdx+len(endTag):]
+		} else {
+			s = s[:startIdx]
+			break
+		}
+	}
+	return s
+}
+
+func buildGeminiModelsURL(apiKey string) string {
+	return "https://generativelanguage.googleapis.com/v1beta/models?key=" + url.QueryEscape(apiKey)
+}
+
+func buildGeminiGenerateURL(model, apiKey string) string {
+	return "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(model) + ":generateContent?key=" + url.QueryEscape(apiKey)
+}
+
+type geminiToolUse struct {
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
+}
+
+func geminiTools(tools []ToolDefinition) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, map[string]any{
+			"name":        tool.Name,
+			"description": tool.Description,
+			"parameters":  sanitizeGeminiSchema(tool.InputSchema),
+		})
+	}
+	return out
+}
+
+func sanitizeGeminiSchema(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if key == "additionalProperties" {
+				continue
+			}
+			out[key] = sanitizeGeminiSchema(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for idx, item := range typed {
+			out[idx] = sanitizeGeminiSchema(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
