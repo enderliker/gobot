@@ -54,7 +54,6 @@ func TestInviteHandlerRedirects(t *testing.T) {
 	}
 }
 
-
 func TestStatsAPIDegradesTo503WithoutDB(t *testing.T) {
 	// Database.Default is nil in test environment if not initialized
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)

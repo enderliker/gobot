@@ -98,4 +98,25 @@ document.addEventListener("DOMContentLoaded", () => {
             revealObserver.observe(el);
         });
     }
+
+    // 5. Theme Toggle Logic
+    const themeToggle = document.getElementById("themeToggle");
+    if (themeToggle) {
+        const theme = document.documentElement.getAttribute("data-theme") || "light";
+        themeToggle.textContent = theme === "dark" ? "☀️" : "🌙";
+        
+        themeToggle.addEventListener("click", () => {
+            let current = document.documentElement.getAttribute("data-theme") || "light";
+            if (current === "dark") {
+                document.documentElement.setAttribute("data-theme", "light");
+                localStorage.setItem("theme", "light");
+                themeToggle.textContent = "🌙";
+            } else {
+                document.documentElement.setAttribute("data-theme", "dark");
+                localStorage.setItem("theme", "dark");
+                themeToggle.textContent = "☀️";
+            }
+        });
+    }
 });
+

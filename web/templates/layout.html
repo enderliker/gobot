@@ -21,10 +21,18 @@
     <meta property="twitter:image" content="/static/img/og-image.png">
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/static/css/tokens.css">
-    <link rel="stylesheet" href="/static/css/layout.css">
-    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/tokens.css?v=4">
+    <link rel="stylesheet" href="/static/css/layout.css?v=4">
+    <link rel="stylesheet" href="/static/css/components.css?v=4">
+
+    <script>
+        (function() {
+            const theme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
 </head>
+
 <body>
     {{template "header" .}}
     
@@ -35,6 +43,9 @@
     {{template "footer" .}}
 
     <!-- Javascript -->
-    <script src="/static/js/main.js" defer></script>
+    <script src="/static/js/main.js?v=4" defer></script>
 </body>
 </html>
+
+
+
