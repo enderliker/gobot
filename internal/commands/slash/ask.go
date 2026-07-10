@@ -126,6 +126,9 @@ func init() {
 						return
 					}
 					if call := structuredToolCallFromAskResult(result); call != nil {
+						if handleDirectReadTool(s, i, call) {
+							return
+						}
 						auditInteraction(i, "tool_call_proposed", "success", toolAuditFields(auditViewFromToolCall(call.Tool, call.User, "", call.Reason)))
 						if err := presentToolConfirmation(s, i, call); err != nil {
 							log.Printf("[ASK] tool confirmation: %v", err)
@@ -474,7 +477,7 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 		var embed *discordgo.MessageEmbed
 		var notice string
 		if data.CustomID == confirmID {
-			if err := ai.ExecuteTool(s, i.GuildID, i.Member, call); err != nil {
+			if err := ai.ExecuteTool(s, i.GuildID, i.ChannelID, i.Member, call); err != nil {
 				auditInteraction(ic, "tool_call_confirmed", toolExecutionOutcome(err), mergeAuditFields(
 					toolAuditFields(auditViewFromToolCall(call.Tool, requestedTarget, call.User, call.Reason)),
 					map[string]any{"error": err.Error()},
@@ -843,4 +846,99 @@ func sanitizeChoiceText(s string) string {
 	s = strings.ReplaceAll(s, "`", "'")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return strings.TrimSpace(s)
+}
+
+// handleDirectReadTool runs and responds immediately to read-only, non-destructive
+// tools (like member_info) without requiring moderator confirmation buttons.
+func handleDirectReadTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
+	if call.Tool != "member_info" {
+		return false
+	}
+
+	candidates, err := ai.ResolveMembers(s, i.GuildID, call.User)
+	if err != nil || len(candidates) == 0 {
+		embed := embeds.Error("Member Not Found", fmt.Sprintf("No members matched %q", call.User))
+		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+			Embeds: &[]*discordgo.MessageEmbed{embed},
+		})
+		return true
+	}
+
+	candidate := candidates[0]
+	if candidate.Member == nil || candidate.Member.User == nil {
+		embed := embeds.Error("Member Not Found", "Failed to resolve member details.")
+		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+			Embeds: &[]*discordgo.MessageEmbed{embed},
+		})
+		return true
+	}
+
+	m := candidate.Member
+	u := m.User
+
+	rolesDesc := "No roles"
+	if len(m.Roles) > 0 {
+		roleMentions := make([]string, len(m.Roles))
+		for idx, rID := range m.Roles {
+			roleMentions[idx] = "<@&" + rID + ">"
+		}
+		rolesDesc = strings.Join(roleMentions, ", ")
+	}
+
+	joinedAt := "Unknown"
+	if !m.JoinedAt.IsZero() {
+		joinedAt = fmt.Sprintf("<t:%d:F> (<t:%d:R>)", m.JoinedAt.Unix(), m.JoinedAt.Unix())
+	}
+
+	createdAtTime, err := discordgo.SnowflakeTimestamp(u.ID)
+	createdAt := "Unknown"
+	if err == nil {
+		createdAt = fmt.Sprintf("<t:%d:F> (<t:%d:R>)", createdAtTime.Unix(), createdAtTime.Unix())
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       "Member Information",
+		Description: fmt.Sprintf("Information for %s", m.Mention()),
+		Color:       0x5865F2,
+		Thumbnail: &discordgo.MessageEmbedThumbnail{
+			URL: u.AvatarURL("256"),
+		},
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   "Username",
+				Value:  fmt.Sprintf("%s (%s)", u.Username, u.ID),
+				Inline: true,
+			},
+			{
+				Name:   "Nickname / Display Name",
+				Value:  m.DisplayName(),
+				Inline: true,
+			},
+			{
+				Name:   "Is Bot?",
+				Value:  strconv.FormatBool(u.Bot),
+				Inline: true,
+			},
+			{
+				Name:   "Joined Server At",
+				Value:  joinedAt,
+				Inline: false,
+			},
+			{
+				Name:   "Account Created At",
+				Value:  createdAt,
+				Inline: false,
+			},
+			{
+				Name:   "Roles",
+				Value:  rolesDesc,
+				Inline: false,
+			},
+		},
+	}
+
+	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+		Embeds: &[]*discordgo.MessageEmbed{embed},
+	})
+	return true
 }

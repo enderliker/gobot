@@ -19,6 +19,7 @@ type ToolCall struct {
 	User         string `json:"user"`
 	Reason       string `json:"reason"`
 	Minutes      int    `json:"minutes"`
+	Count        int    `json:"count"`
 	Confirmation string `json:"confirmation"`
 }
 
@@ -149,6 +150,42 @@ var moderationTools = []ToolDefinition{
 			"additionalProperties": false,
 		},
 	},
+	{
+		Name:        "purge",
+		Description: "Bulk delete messages from the current channel when the user explicitly requests to clear, purge, or delete messages.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"count": map[string]any{
+					"type":        "integer",
+					"description": "Number of messages to delete. Must be between 1 and 100.",
+					"minimum":     1,
+					"maximum":     100,
+				},
+				"reason": map[string]any{
+					"type":        "string",
+					"description": "Short moderation reason suitable for the Discord audit log.",
+				},
+			},
+			"required":             []string{"count", "reason"},
+			"additionalProperties": false,
+		},
+	},
+	{
+		Name:        "member_info",
+		Description: "Retrieve detailed information about a server member (join date, account creation date, roles, etc.) when the user asks for user/member information.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"user": map[string]any{
+					"type":        "string",
+					"description": "Target member reference. Can be an ID, mention, username, nickname, display name, initials, or close textual match.",
+				},
+			},
+			"required":             []string{"user"},
+			"additionalProperties": false,
+		},
+	},
 }
 
 const moderationToolPrompt = "You are a Discord server assistant. Use the provided moderation tools when the user is asking to ban, kick, timeout, mute, or otherwise moderate a member. The tool input field 'user' may contain an ID, mention, username, nickname, display name, initials, or other close textual reference from the request. If no moderation tool is required, answer normally."
@@ -176,6 +213,12 @@ func ModerationToolsForMember(session *discordgo.Session, guildID string, member
 		tools = append(tools, moderationToolNamed("timeout"))
 		tools = append(tools, moderationToolNamed("untimeout"))
 	}
+	if hasPermission(session, guildID, member, discordgo.PermissionManageMessages) {
+		tools = append(tools, moderationToolNamed("purge"))
+	}
+	// member_info does not require moderation privileges as it's read-only
+	tools = append(tools, moderationToolNamed("member_info"))
+
 	if len(tools) == 0 {
 		return nil
 	}
@@ -237,8 +280,8 @@ func ParseToolArgumentsJSON(toolName, args string) (*ToolCall, error) {
 	return ParseToolArguments(toolName, input)
 }
 
-func ExecuteTool(session *discordgo.Session, guildID string, actor *discordgo.Member, call *ToolCall) error {
-	if !isDiscordID(call.User) {
+func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *discordgo.Member, call *ToolCall) error {
+	if call.Tool != "purge" && !isDiscordID(call.User) {
 		return fmt.Errorf(toolErrTargetUserNotResolved)
 	}
 
@@ -250,7 +293,7 @@ func ExecuteTool(session *discordgo.Session, guildID string, actor *discordgo.Me
 		return fmt.Errorf(toolErrBotMemberLookupFailed)
 	}
 
-	if call.Tool != "unban" {
+	if call.Tool != "unban" && call.Tool != "purge" && call.Tool != "member_info" {
 		target, err := session.GuildMember(guildID, call.User)
 		if err != nil {
 			if isDiscordRESTErrorCode(err, discordgo.ErrCodeUnknownMember) {
@@ -309,6 +352,29 @@ func ExecuteTool(session *discordgo.Session, guildID string, actor *discordgo.Me
 			return fmt.Errorf(toolErrBotMissingModerateMembersPermission)
 		}
 		return normalizeDiscordToolActionError(session.GuildMemberTimeout(guildID, call.User, nil))
+	case "purge":
+		if !hasPermission(session, guildID, actor, discordgo.PermissionManageMessages) {
+			return fmt.Errorf("missing Manage Messages permission")
+		}
+		if !hasPermission(session, guildID, botMember, discordgo.PermissionManageMessages) {
+			return fmt.Errorf("bot is missing Manage Messages permission")
+		}
+		messages, err := session.ChannelMessages(channelID, call.Count, "", "", "")
+		if err != nil {
+			return normalizeDiscordToolActionError(err)
+		}
+		if len(messages) == 0 {
+			return nil
+		}
+		messageIDs := make([]string, 0, len(messages))
+		for _, msg := range messages {
+			messageIDs = append(messageIDs, msg.ID)
+		}
+		return normalizeDiscordToolActionError(session.ChannelMessagesBulkDelete(channelID, messageIDs))
+	case "member_info":
+		// Read-only tool, actual output formatting is handled in ask.go directly,
+		// this execution is just a placeholder to prevent 'unknown tool' errors.
+		return nil
 	default:
 		return fmt.Errorf(toolErrUnknownTool)
 	}
@@ -384,24 +450,40 @@ func isDiscordRESTErrorCode(err error, code int) bool {
 
 func validateToolCall(call *ToolCall) error {
 	switch call.Tool {
-	case "ban", "unban", "kick", "untimeout":
+	case "ban", "unban", "kick", "untimeout", "member_info":
 	case "timeout":
 		if call.Minutes < 1 || call.Minutes > maxTimeoutMinutes {
 			return fmt.Errorf("invalid timeout duration")
 		}
+	case "purge":
+		if call.Count < 1 || call.Count > 100 {
+			return fmt.Errorf("invalid purge count")
+		}
 	default:
 		return fmt.Errorf(toolErrUnknownTool)
+	}
+
+	if call.Tool == "purge" {
+		if call.Reason == "" {
+			return fmt.Errorf("missing moderation reason")
+		}
+		if len(call.Reason) > maxAuditReasonLen {
+			return fmt.Errorf("reason too long")
+		}
+		return nil
 	}
 
 	if call.User == "" || len(call.User) > maxUserReferenceLen {
 		return fmt.Errorf("invalid target user")
 	}
 
-	if call.Reason == "" {
-		return fmt.Errorf("missing moderation reason")
-	}
-	if len(call.Reason) > maxAuditReasonLen {
-		return fmt.Errorf("reason too long")
+	if call.Tool != "member_info" {
+		if call.Reason == "" {
+			return fmt.Errorf("missing moderation reason")
+		}
+		if len(call.Reason) > maxAuditReasonLen {
+			return fmt.Errorf("reason too long")
+		}
 	}
 
 	return nil
@@ -424,6 +506,10 @@ func ConfirmationText(call *ToolCall, target string) string {
 		return fmt.Sprintf("Timeout %s for `%d` minute(s) for `%s`?", target, call.Minutes, reason)
 	case "untimeout":
 		return fmt.Sprintf("Remove timeout/mute from %s for `%s`?", target, reason)
+	case "purge":
+		return fmt.Sprintf("Purge %d message(s) from this channel for `%s`?", call.Count, reason)
+	case "member_info":
+		return fmt.Sprintf("Get member information for %s?", target)
 	default:
 		return "Confirm this moderation action?"
 	}

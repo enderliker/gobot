@@ -88,7 +88,7 @@ func TestModerationToolsForMemberIncludesAllToolsForGuildOwner(t *testing.T) {
 	}
 
 	tools := ModerationToolsForMember(session, guildID, member)
-	if got, want := toolNames(tools), []string{"ban", "unban", "kick", "timeout", "untimeout"}; !equalStrings(got, want) {
+	if got, want := toolNames(tools), []string{"ban", "unban", "kick", "timeout", "untimeout", "purge", "member_info"}; !equalStrings(got, want) {
 		t.Fatalf("expected owner to receive all moderation tools, got %v", got)
 	}
 }
@@ -107,7 +107,7 @@ func TestModerationToolsForMemberIncludesAllToolsForAdministrator(t *testing.T) 
 	}
 
 	tools := ModerationToolsForMember(session, guildID, member)
-	if got, want := toolNames(tools), []string{"ban", "unban", "kick", "timeout", "untimeout"}; !equalStrings(got, want) {
+	if got, want := toolNames(tools), []string{"ban", "unban", "kick", "timeout", "untimeout", "purge", "member_info"}; !equalStrings(got, want) {
 		t.Fatalf("expected admin to receive all moderation tools, got %v", got)
 	}
 }

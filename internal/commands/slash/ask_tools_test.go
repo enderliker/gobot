@@ -58,8 +58,11 @@ func TestPrepareAskProviderRequestScopesToolsAndKeepsTextJSONAsText(t *testing.T
 	if err != nil {
 		t.Fatalf("unexpected prepareAskProviderRequest error: %v", err)
 	}
-	if len(request.Tools) != 0 {
-		t.Fatalf("expected no moderation tools for actor without permissions, got %d", len(request.Tools))
+	if len(request.Tools) != 1 {
+		t.Fatalf("expected only 1 moderation tool (member_info) for actor without permissions, got %d", len(request.Tools))
+	}
+	if request.Tools[0].Name != "member_info" {
+		t.Fatalf("expected only member_info tool, got %q", request.Tools[0].Name)
 	}
 
 	provider := &capturingAskProvider{
@@ -72,8 +75,8 @@ func TestPrepareAskProviderRequestScopesToolsAndKeepsTextJSONAsText(t *testing.T
 	if err != nil {
 		t.Fatalf("unexpected provider error: %v", err)
 	}
-	if len(provider.receivedTools) != 0 {
-		t.Fatalf("expected provider payload to receive zero tools, got %d", len(provider.receivedTools))
+	if len(provider.receivedTools) != 1 {
+		t.Fatalf("expected provider payload to receive exactly 1 tool, got %d", len(provider.receivedTools))
 	}
 	if provider.receivedPrompt.BaseSystem != ai.BaseSystemPrompt {
 		t.Fatalf("expected BaseSystemPrompt, got %q", provider.receivedPrompt.BaseSystem)
