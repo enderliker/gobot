@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -135,6 +136,18 @@ func (l *Logger) run() {
 	}()
 
 	for event := range l.events {
+		if event.Outcome == "error" {
+			errStr := ""
+			if event.Fields != nil {
+				if val, ok := event.Fields["error"]; ok {
+					errStr = fmt.Sprintf(" - error: %v", val)
+				} else if val, ok := event.Fields["reason"]; ok {
+					errStr = fmt.Sprintf(" - reason: %v", val)
+				}
+			}
+			log.Printf("[AUDIT-ERROR] Guild: %s - Action: %s%s", event.GuildID, event.ActionType, errStr)
+		}
+
 		body, err := json.Marshal(eventMap(event))
 		if err != nil {
 			log.Printf("[AUDIT] marshal failed: %v", err)
@@ -176,13 +189,13 @@ func newDefaultLogger() *Logger {
 
 func newLoggerFromPath(path string) *Logger {
 	if path == "" {
-		return New(os.Stderr, nil)
+		return New(io.Discard, nil)
 	}
 
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		log.Printf("[AUDIT] failed to open AUDIT_LOG_PATH=%q, falling back to stderr: %v", path, err)
-		return New(os.Stderr, nil)
+		log.Printf("[AUDIT] failed to open AUDIT_LOG_PATH=%q, falling back to discard: %v", path, err)
+		return New(io.Discard, nil)
 	}
 
 	return New(file, file.Close)

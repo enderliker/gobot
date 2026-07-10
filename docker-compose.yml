@@ -18,7 +18,6 @@ services:
 
   gobot:
     build: .
-    image: gobot:latest
     container_name: gobot
     restart: unless-stopped
     depends_on:
