@@ -277,16 +277,87 @@ func sanitizeGeminiSchema(value any) any {
 }
 
 func (g *Gemini) generateImage(ctx context.Context, apiKey, model, prompt string) (*AskResult, error) {
-	urlStr := "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(model) + ":predict?key=" + url.QueryEscape(apiKey)
+	if strings.Contains(model, "imagen-") {
+		// Legacy predict-based logic for imagen-* models
+		urlStr := "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(model) + ":predict?key=" + url.QueryEscape(apiKey)
+
+		reqPayload := map[string]any{
+			"instances": []map[string]any{
+				{
+					"prompt": prompt,
+				},
+			},
+			"parameters": map[string]any{
+				"sampleCount": 1,
+			},
+		}
+
+		bodyBytes, err := json.Marshal(reqPayload)
+		if err != nil {
+			return nil, err
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, sanitizeProviderError(err, apiKey)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil, sanitizeProviderError(err, apiKey)
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, sanitizeProviderError(parseGeminiError(resp.StatusCode, respBody), apiKey)
+		}
+
+		var data struct {
+			Predictions []struct {
+				BytesBase64Encoded string `json:"bytesBase64Encoded"`
+				MimeType           string `json:"mimeType"`
+			} `json:"predictions"`
+		}
+
+		if err := json.Unmarshal(respBody, &data); err != nil {
+			return nil, fmt.Errorf("failed to parse image predictions: %w", err)
+		}
+
+		if len(data.Predictions) == 0 {
+			return nil, fmt.Errorf("no image predictions returned")
+		}
+
+		pred := data.Predictions[0]
+		imgData, err := base64.StdEncoding.DecodeString(pred.BytesBase64Encoded)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode base64 image: %w", err)
+		}
+
+		return &AskResult{
+			ImageData:     imgData,
+			ImageMimeType: pred.MimeType,
+		}, nil
+	}
+
+	// For models ending in "-image", use generateContent with responseModalities: ["IMAGE"]
+	urlStr := "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(model) + ":generateContent?key=" + url.QueryEscape(apiKey)
 
 	reqPayload := map[string]any{
-		"instances": []map[string]any{
+		"contents": []map[string]any{
 			{
-				"prompt": prompt,
+				"parts": []map[string]any{
+					{"text": prompt},
+				},
 			},
 		},
-		"parameters": map[string]any{
-			"sampleCount": 1,
+		"generationConfig": map[string]any{
+			"responseModalities": []string{"IMAGE"},
 		},
 	}
 
@@ -317,28 +388,40 @@ func (g *Gemini) generateImage(ctx context.Context, apiKey, model, prompt string
 	}
 
 	var data struct {
-		Predictions []struct {
-			BytesBase64Encoded string `json:"bytesBase64Encoded"`
-			MimeType           string `json:"mimeType"`
-		} `json:"predictions"`
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					InlineData struct {
+						MimeType string `json:"mimeType"`
+						Data     string `json:"data"`
+					} `json:"inlineData"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
 	}
 
 	if err := json.Unmarshal(respBody, &data); err != nil {
-		return nil, fmt.Errorf("failed to parse image predictions: %w", err)
+		return nil, fmt.Errorf("failed to parse generateContent image response: %w", err)
 	}
 
-	if len(data.Predictions) == 0 {
-		return nil, fmt.Errorf("no image predictions returned")
+	for _, cand := range data.Candidates {
+		for _, part := range cand.Content.Parts {
+			if part.InlineData.Data != "" {
+				imgData, err := base64.StdEncoding.DecodeString(part.InlineData.Data)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decode inline image data: %w", err)
+				}
+				mime := part.InlineData.MimeType
+				if mime == "" {
+					mime = "image/png"
+				}
+				return &AskResult{
+					ImageData:     imgData,
+					ImageMimeType: mime,
+				}, nil
+			}
+		}
 	}
 
-	pred := data.Predictions[0]
-	imgData, err := base64.StdEncoding.DecodeString(pred.BytesBase64Encoded)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode base64 image: %w", err)
-	}
-
-	return &AskResult{
-		ImageData:     imgData,
-		ImageMimeType: pred.MimeType,
-	}, nil
+	return nil, fmt.Errorf("no image data returned in generateContent response")
 }
