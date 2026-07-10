@@ -111,6 +111,44 @@ var moderationTools = []ToolDefinition{
 			"additionalProperties": false,
 		},
 	},
+	{
+		Name:        "unban",
+		Description: "Unban a user when the user explicitly requests an unban.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"user": map[string]any{
+					"type":        "string",
+					"description": "Target user reference. Can be a raw Discord user ID or close textual match.",
+				},
+				"reason": map[string]any{
+					"type":        "string",
+					"description": "Short reason for the audit log.",
+				},
+			},
+			"required":             []string{"user", "reason"},
+			"additionalProperties": false,
+		},
+	},
+	{
+		Name:        "untimeout",
+		Description: "Remove timeout/mute from a guild member when the user explicitly requests to remove their timeout or unmute them.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"user": map[string]any{
+					"type":        "string",
+					"description": "Target member reference. Can be an ID, mention, username, nickname, display name, initials, or close textual match.",
+				},
+				"reason": map[string]any{
+					"type":        "string",
+					"description": "Short moderation reason suitable for the Discord audit log.",
+				},
+			},
+			"required":             []string{"user", "reason"},
+			"additionalProperties": false,
+		},
+	},
 }
 
 const moderationToolPrompt = "You are a Discord server assistant. Use the provided moderation tools when the user is asking to ban, kick, timeout, mute, or otherwise moderate a member. The tool input field 'user' may contain an ID, mention, username, nickname, display name, initials, or other close textual reference from the request. If no moderation tool is required, answer normally."
@@ -129,12 +167,14 @@ func ModerationToolsForMember(session *discordgo.Session, guildID string, member
 	tools := make([]ToolDefinition, 0, len(moderationTools))
 	if hasPermission(session, guildID, member, discordgo.PermissionBanMembers) {
 		tools = append(tools, moderationToolNamed("ban"))
+		tools = append(tools, moderationToolNamed("unban"))
 	}
 	if hasPermission(session, guildID, member, discordgo.PermissionKickMembers) {
 		tools = append(tools, moderationToolNamed("kick"))
 	}
 	if hasPermission(session, guildID, member, discordgo.PermissionModerateMembers) {
 		tools = append(tools, moderationToolNamed("timeout"))
+		tools = append(tools, moderationToolNamed("untimeout"))
 	}
 	if len(tools) == 0 {
 		return nil
@@ -202,14 +242,6 @@ func ExecuteTool(session *discordgo.Session, guildID string, actor *discordgo.Me
 		return fmt.Errorf(toolErrTargetUserNotResolved)
 	}
 
-	target, err := session.GuildMember(guildID, call.User)
-	if err != nil {
-		if isDiscordRESTErrorCode(err, discordgo.ErrCodeUnknownMember) {
-			return fmt.Errorf(toolErrTargetMemberNotFound)
-		}
-		return fmt.Errorf(toolErrTargetMemberLookupFailed)
-	}
-
 	botMember, err := session.GuildMember(guildID, session.State.User.ID)
 	if err != nil {
 		if isDiscordRESTErrorCode(err, discordgo.ErrCodeUnknownMember) {
@@ -218,11 +250,21 @@ func ExecuteTool(session *discordgo.Session, guildID string, actor *discordgo.Me
 		return fmt.Errorf(toolErrBotMemberLookupFailed)
 	}
 
-	if !memberAbove(session, guildID, actor, target) {
-		return fmt.Errorf(toolErrRoleHierarchyPreventsAction)
-	}
-	if !memberAbove(session, guildID, botMember, target) {
-		return fmt.Errorf(toolErrBotRoleHierarchyPreventsAction)
+	if call.Tool != "unban" {
+		target, err := session.GuildMember(guildID, call.User)
+		if err != nil {
+			if isDiscordRESTErrorCode(err, discordgo.ErrCodeUnknownMember) {
+				return fmt.Errorf(toolErrTargetMemberNotFound)
+			}
+			return fmt.Errorf(toolErrTargetMemberLookupFailed)
+		}
+
+		if !memberAbove(session, guildID, actor, target) {
+			return fmt.Errorf(toolErrRoleHierarchyPreventsAction)
+		}
+		if !memberAbove(session, guildID, botMember, target) {
+			return fmt.Errorf(toolErrBotRoleHierarchyPreventsAction)
+		}
 	}
 
 	switch call.Tool {
@@ -234,6 +276,14 @@ func ExecuteTool(session *discordgo.Session, guildID string, actor *discordgo.Me
 			return fmt.Errorf(toolErrBotMissingBanMembersPermission)
 		}
 		return normalizeDiscordToolActionError(session.GuildBanCreateWithReason(guildID, call.User, call.Reason, 0))
+	case "unban":
+		if !hasPermission(session, guildID, actor, discordgo.PermissionBanMembers) {
+			return fmt.Errorf(toolErrMissingBanMembersPermission)
+		}
+		if !hasPermission(session, guildID, botMember, discordgo.PermissionBanMembers) {
+			return fmt.Errorf(toolErrBotMissingBanMembersPermission)
+		}
+		return normalizeDiscordToolActionError(session.GuildBanDelete(guildID, call.User))
 	case "kick":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionKickMembers) {
 			return fmt.Errorf(toolErrMissingKickMembersPermission)
@@ -251,6 +301,14 @@ func ExecuteTool(session *discordgo.Session, guildID string, actor *discordgo.Me
 		}
 		until := time.Now().Add(time.Duration(call.Minutes) * time.Minute)
 		return normalizeDiscordToolActionError(session.GuildMemberTimeout(guildID, call.User, &until))
+	case "untimeout":
+		if !hasPermission(session, guildID, actor, discordgo.PermissionModerateMembers) {
+			return fmt.Errorf(toolErrMissingModerateMembersPermission)
+		}
+		if !hasPermission(session, guildID, botMember, discordgo.PermissionModerateMembers) {
+			return fmt.Errorf(toolErrBotMissingModerateMembersPermission)
+		}
+		return normalizeDiscordToolActionError(session.GuildMemberTimeout(guildID, call.User, nil))
 	default:
 		return fmt.Errorf(toolErrUnknownTool)
 	}
@@ -326,7 +384,7 @@ func isDiscordRESTErrorCode(err error, code int) bool {
 
 func validateToolCall(call *ToolCall) error {
 	switch call.Tool {
-	case "ban", "kick":
+	case "ban", "unban", "kick", "untimeout":
 	case "timeout":
 		if call.Minutes < 1 || call.Minutes > maxTimeoutMinutes {
 			return fmt.Errorf("invalid timeout duration")
@@ -358,10 +416,14 @@ func ConfirmationText(call *ToolCall, target string) string {
 	switch call.Tool {
 	case "ban":
 		return fmt.Sprintf("Ban %s for `%s`?", target, reason)
+	case "unban":
+		return fmt.Sprintf("Unban %s for `%s`?", target, reason)
 	case "kick":
 		return fmt.Sprintf("Kick %s for `%s`?", target, reason)
 	case "timeout":
 		return fmt.Sprintf("Timeout %s for `%d` minute(s) for `%s`?", target, call.Minutes, reason)
+	case "untimeout":
+		return fmt.Sprintf("Remove timeout/mute from %s for `%s`?", target, reason)
 	default:
 		return "Confirm this moderation action?"
 	}

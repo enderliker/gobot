@@ -46,6 +46,34 @@ func TestParseToolArgumentsRejectsOverlongReason(t *testing.T) {
 	}
 }
 
+func TestParseToolArgumentsJSONValidUnban(t *testing.T) {
+	call, err := ParseToolArgumentsJSON("UNBAN", `{"user":"12345678901234567","reason":"appealed"}`)
+	if err != nil {
+		t.Fatalf("expected valid tool call, got error: %v", err)
+	}
+
+	if call.Tool != "unban" {
+		t.Fatalf("expected normalized tool unban, got %q", call.Tool)
+	}
+	if got, want := call.Confirmation, "Unban <@12345678901234567> for `appealed`?"; got != want {
+		t.Fatalf("expected canonical confirmation %q, got %q", want, got)
+	}
+}
+
+func TestParseToolArgumentsJSONValidUntimeout(t *testing.T) {
+	call, err := ParseToolArgumentsJSON("UNTIMEOUT", `{"user":"12345678901234567","reason":"behavior improved"}`)
+	if err != nil {
+		t.Fatalf("expected valid tool call, got error: %v", err)
+	}
+
+	if call.Tool != "untimeout" {
+		t.Fatalf("expected normalized tool untimeout, got %q", call.Tool)
+	}
+	if got, want := call.Confirmation, "Remove timeout/mute from <@12345678901234567> for `behavior improved`?"; got != want {
+		t.Fatalf("expected canonical confirmation %q, got %q", want, got)
+	}
+}
+
 func TestModerationToolsForMemberIncludesAllToolsForGuildOwner(t *testing.T) {
 	session, guildID := seedPermissionTestSession(t, "owner-1", []*discordgo.Role{
 		{
@@ -60,7 +88,7 @@ func TestModerationToolsForMemberIncludesAllToolsForGuildOwner(t *testing.T) {
 	}
 
 	tools := ModerationToolsForMember(session, guildID, member)
-	if got, want := toolNames(tools), []string{"ban", "kick", "timeout"}; !equalStrings(got, want) {
+	if got, want := toolNames(tools), []string{"ban", "unban", "kick", "timeout", "untimeout"}; !equalStrings(got, want) {
 		t.Fatalf("expected owner to receive all moderation tools, got %v", got)
 	}
 }
@@ -79,7 +107,7 @@ func TestModerationToolsForMemberIncludesAllToolsForAdministrator(t *testing.T) 
 	}
 
 	tools := ModerationToolsForMember(session, guildID, member)
-	if got, want := toolNames(tools), []string{"ban", "kick", "timeout"}; !equalStrings(got, want) {
+	if got, want := toolNames(tools), []string{"ban", "unban", "kick", "timeout", "untimeout"}; !equalStrings(got, want) {
 		t.Fatalf("expected admin to receive all moderation tools, got %v", got)
 	}
 }
