@@ -69,7 +69,7 @@ func (a *Anthropic) Ask(ctx context.Context, apiKey, model string, prompt Prompt
 	}
 	payload := map[string]any{
 		"model":      model,
-		"max_tokens": 1024,
+		"max_tokens": 900,
 		"system":     buildAnthropicSystemPrompt(prompt),
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt.UserPrompt},

@@ -538,3 +538,184 @@ func readRequestBody(req *http.Request) ([]byte, error) {
 	defer req.Body.Close()
 	return io.ReadAll(req.Body)
 }
+
+func TestAskExecuteLongResponseTruncation(t *testing.T) {
+	d := newSlashTestDatabase(t)
+	if err := d.SetGuildConfig(testAskGuildID, "secret-api-key", "Capture", "model-1"); err != nil {
+		t.Fatalf("set guild config: %v", err)
+	}
+
+	// 2500 character long answer
+	longAnswer := strings.Repeat("A", 2500)
+
+	restoreManager := stubAIManager(t, &capturingAskProvider{
+		result: &ai.AskResult{Text: longAnswer},
+	})
+	defer restoreManager()
+
+	restoreLimiter := stubAskLimiterForTest()
+	defer restoreLimiter()
+
+	recorder := &discordRequestRecorder{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.add(t, r)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/callback"):
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"100000000000000009","channel_id":"` + testAskChannelID + `","content":"ok"}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	restoreEndpoints := stubDiscordEndpoints(t, server.URL+"/")
+	defer restoreEndpoints()
+
+	lifecycle.Init()
+	defer func() {
+		lifecycle.Cancel()
+		lifecycle.Wait()
+	}()
+
+	session, err := discordgo.New("Bot test-token")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.Client = server.Client()
+	session.SyncEvents = true
+
+	seedAskGuildState(t, session, []*discordgo.Member{
+		{
+			User:  &discordgo.User{ID: testAskUserID, Username: "requester"},
+			Roles: []string{testAskRoleID},
+		},
+	})
+
+	cmd := registeredSlashCommand(t, "ask")
+	cmd.Execute(session, newAskInteractionForUser(testAskUserID, []string{testAskRoleID}, "Tell me a long story."))
+
+	recorder.waitForCount(t, 2)
+	lifecycle.Wait()
+
+	requests := recorder.snapshot()
+	editOriginal := findDiscordRequest(t, requests, http.MethodPatch, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original")
+
+	var payload map[string]any
+	if err := json.Unmarshal(editOriginal.Body, &payload); err != nil {
+		t.Fatalf("unmarshal original edit payload: %v", err)
+	}
+	content := payload["content"].(string)
+	if len(content) != 2000 {
+		t.Fatalf("expected content length to be truncated to exactly 2000, got %d", len(content))
+	}
+	if strings.Contains(content, "truncated") {
+		t.Fatalf("content should not contain the truncation suffix anymore")
+	}
+}
+
+func TestAskExecuteLongResponseMultiMessageSplitting(t *testing.T) {
+	d := newSlashTestDatabase(t)
+	if err := d.SetGuildConfig(testAskGuildID, "secret-api-key", "Capture", "model-1"); err != nil {
+		t.Fatalf("set guild config: %v", err)
+	}
+	if err := d.SetGuildMultiMessage(testAskGuildID, true); err != nil {
+		t.Fatalf("set multi message: %v", err)
+	}
+
+	// 4500 character long answer
+	longAnswer := strings.Repeat("A", 2000) + strings.Repeat("B", 2000) + strings.Repeat("C", 500)
+
+	restoreManager := stubAIManager(t, &capturingAskProvider{
+		result: &ai.AskResult{Text: longAnswer},
+	})
+	defer restoreManager()
+
+	restoreLimiter := stubAskLimiterForTest()
+	defer restoreLimiter()
+
+	recorder := &discordRequestRecorder{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.add(t, r)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/callback"):
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"100000000000000009","channel_id":"` + testAskChannelID + `","content":"ok"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/webhooks/"+testAskAppID+"/"+testAskToken):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"123","content":"ok"}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	restoreEndpoints := stubDiscordEndpoints(t, server.URL+"/")
+	defer restoreEndpoints()
+
+	lifecycle.Init()
+	defer func() {
+		lifecycle.Cancel()
+		lifecycle.Wait()
+	}()
+
+	session, err := discordgo.New("Bot test-token")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.Client = server.Client()
+	session.SyncEvents = true
+
+	seedAskGuildState(t, session, []*discordgo.Member{
+		{
+			User:  &discordgo.User{ID: testAskUserID, Username: "requester"},
+			Roles: []string{testAskRoleID},
+		},
+	})
+
+	cmd := registeredSlashCommand(t, "ask")
+	cmd.Execute(session, newAskInteractionForUser(testAskUserID, []string{testAskRoleID}, "Tell me a long story."))
+
+	// Expect 4 requests: 1 callback, 1 patch original, 2 followup posts
+	recorder.waitForCount(t, 4)
+	lifecycle.Wait()
+
+	requests := recorder.snapshot()
+	editOriginal := findDiscordRequest(t, requests, http.MethodPatch, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original")
+	followups := findDiscordRequests(requests, http.MethodPost, "/webhooks/"+testAskAppID+"/"+testAskToken)
+
+	var payload map[string]any
+	if err := json.Unmarshal(editOriginal.Body, &payload); err != nil {
+		t.Fatalf("unmarshal original edit payload: %v", err)
+	}
+	content1 := payload["content"].(string)
+	if content1 != strings.Repeat("A", 2000) {
+		t.Fatalf("first chunk does not match expected output")
+	}
+
+	if len(followups) != 2 {
+		t.Fatalf("expected 2 followups, got %d", len(followups))
+	}
+
+	var payload2 map[string]any
+	if err := json.Unmarshal(followups[0].Body, &payload2); err != nil {
+		t.Fatalf("unmarshal followup 1: %v", err)
+	}
+	content2 := payload2["content"].(string)
+	if content2 != strings.Repeat("B", 2000) {
+		t.Fatalf("second chunk does not match expected output")
+	}
+
+	var payload3 map[string]any
+	if err := json.Unmarshal(followups[1].Body, &payload3); err != nil {
+		t.Fatalf("unmarshal followup 2: %v", err)
+	}
+	content3 := payload3["content"].(string)
+	if content3 != strings.Repeat("C", 500) {
+		t.Fatalf("third chunk does not match expected output")
+	}
+}

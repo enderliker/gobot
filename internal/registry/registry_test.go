@@ -17,8 +17,8 @@ func TestRegisterCommand(t *testing.T) {
 	r := newRegistry()
 
 	err := r.RegisterCommand(&registry.Command{
-		Module: "Test",
-		Data:   &discordgo.ApplicationCommand{Name: "test", Description: "test cmd"},
+		Module:  "Test",
+		Data:    &discordgo.ApplicationCommand{Name: "test", Description: "test cmd"},
 		Execute: func(s *discordgo.Session, i *discordgo.InteractionCreate) {},
 	})
 

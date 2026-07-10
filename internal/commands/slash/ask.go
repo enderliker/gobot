@@ -175,11 +175,8 @@ func init() {
 								return
 							}
 							answer = sanitizeAssistantVisibleText(answer, reqPrompt)
-							if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
-								Content:         stringPtr(plainAskResponseContent(answer)),
-								AllowedMentions: allowedMentionsForActor(i),
-							}); err != nil {
-								log.Printf("[ASK] web_search response edit failed: %v", err)
+							if err := sendAskResponse(ctx, s, i, cfg, answer); err != nil {
+								log.Printf("[ASK] web_search response send failed: %v", err)
 							}
 							return
 						}
@@ -202,11 +199,8 @@ func init() {
 					}
 
 					answer := sanitizeAssistantVisibleText(result.Text, reqPrompt)
-					if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
-						Content:         stringPtr(plainAskResponseContent(answer)),
-						AllowedMentions: allowedMentionsForActor(i),
-					}); err != nil {
-						log.Printf("[ASK] original response edit failed after retries: %v", err)
+					if err := sendAskResponse(ctx, s, i, cfg, answer); err != nil {
+						log.Printf("[ASK] original response send failed: %v", err)
 					}
 				}
 			})
@@ -645,8 +639,8 @@ func isNonRetryableDiscordEditError(err error) bool {
 		return false
 	}
 	switch restErr.Message.Code {
-	case discordgo.ErrCodeUnknownMessage,  // 10008 — message deleted (e.g. by purge)
-		10062:                              // 10062 — interaction expired / unknown interaction
+	case discordgo.ErrCodeUnknownMessage, // 10008 — message deleted (e.g. by purge)
+		10062: // 10062 — interaction expired / unknown interaction
 		return true
 	}
 	return false
@@ -707,23 +701,60 @@ func sendEphemeralFollowupWithRetry(s *discordgo.Session, i *discordgo.Interacti
 
 func plainAskResponseContent(answer string) string {
 	const maxContentLen = 2000
-	const truncationSuffix = "\n\n*Response truncated...*"
-
 	answer = strings.TrimSpace(answer)
 	if len(answer) <= maxContentLen {
 		return answer
 	}
+	runes := []rune(answer)
+	if len(runes) > maxContentLen {
+		runes = runes[:maxContentLen]
+	}
+	return string(runes)
+}
+
+func sendAskResponse(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, cfg *database.GuildConfig, answer string) error {
+	const chunkSize = 2000
+	answer = strings.TrimSpace(answer)
+
+	if len(answer) <= chunkSize || !cfg.MultiMessage {
+		return editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+			Content:         stringPtr(plainAskResponseContent(answer)),
+			AllowedMentions: allowedMentionsForActor(i),
+		})
+	}
 
 	runes := []rune(answer)
-	suffixRunes := []rune(truncationSuffix)
-	limit := maxContentLen - len(suffixRunes)
-	if limit <= 0 {
-		return string(suffixRunes[:maxContentLen])
+	var chunks []string
+	for len(runes) > 0 {
+		n := chunkSize
+		if n > len(runes) {
+			n = len(runes)
+		}
+		chunks = append(chunks, string(runes[:n]))
+		runes = runes[n:]
 	}
-	if len(runes) > limit {
-		runes = runes[:limit]
+
+	if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+		Content:         stringPtr(chunks[0]),
+		AllowedMentions: allowedMentionsForActor(i),
+	}); err != nil {
+		return err
 	}
-	return string(runes) + truncationSuffix
+
+	for _, chunk := range chunks[1:] {
+		if ctx.Err() != nil {
+			break
+		}
+		chunk := chunk
+		_, err := s.FollowupMessageCreate(i.Interaction, false, &discordgo.WebhookParams{
+			Content:         chunk,
+			AllowedMentions: allowedMentionsForActor(i),
+		})
+		if err != nil {
+			log.Printf("[ASK] followup chunk send failed: %v", err)
+		}
+	}
+	return nil
 }
 
 func stringPtr(s string) *string {

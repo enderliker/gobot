@@ -21,10 +21,11 @@ import (
 const MaxGuildSystemPromptChars = 4000
 
 type GuildConfig struct {
-	GuildID  string
-	APIKey   string
-	Provider string
-	Model    string
+	GuildID      string
+	APIKey       string
+	Provider     string
+	Model        string
+	MultiMessage bool
 }
 
 type Database struct {
@@ -95,18 +96,21 @@ func (d *Database) Close() error {
 
 func (d *Database) migrate() error {
 	var q string
-	var alter string
+	var alterModel string
+	var alterMultiMessage string
 	var promptTable string
 	var warningsTable string
 	if d.driver == "mysql" {
 		q = `CREATE TABLE IF NOT EXISTS guild_config (
-			guild_id   VARCHAR(20)  PRIMARY KEY,
-			api_key    TEXT         NOT NULL,
-			provider   VARCHAR(64)  NOT NULL,
-			model      VARCHAR(128) NOT NULL DEFAULT '',
-			updated_at TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+			guild_id      VARCHAR(20)  PRIMARY KEY,
+			api_key       TEXT         NOT NULL,
+			provider      VARCHAR(64)  NOT NULL,
+			model         VARCHAR(128) NOT NULL DEFAULT '',
+			multi_message TINYINT(1)   NOT NULL DEFAULT 0,
+			updated_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 		)`
-		alter = `ALTER TABLE guild_config ADD COLUMN model VARCHAR(128) NOT NULL DEFAULT ''`
+		alterModel = `ALTER TABLE guild_config ADD COLUMN model VARCHAR(128) NOT NULL DEFAULT ''`
+		alterMultiMessage = `ALTER TABLE guild_config ADD COLUMN multi_message TINYINT(1) NOT NULL DEFAULT 0`
 		promptTable = `CREATE TABLE IF NOT EXISTS guild_prompt_config (
 			guild_id             VARCHAR(20)  PRIMARY KEY,
 			guild_system_prompt  TEXT         NOT NULL,
@@ -122,13 +126,15 @@ func (d *Database) migrate() error {
 		)`
 	} else if d.driver == "postgres" {
 		q = `CREATE TABLE IF NOT EXISTS guild_config (
-			guild_id   TEXT PRIMARY KEY,
-			api_key    TEXT NOT NULL,
-			provider   TEXT NOT NULL,
-			model      TEXT NOT NULL DEFAULT '',
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			guild_id      TEXT PRIMARY KEY,
+			api_key       TEXT NOT NULL,
+			provider      TEXT NOT NULL,
+			model         TEXT NOT NULL DEFAULT '',
+			multi_message BOOLEAN NOT NULL DEFAULT FALSE,
+			updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`
-		alter = `ALTER TABLE guild_config ADD COLUMN model TEXT NOT NULL DEFAULT ''`
+		alterModel = `ALTER TABLE guild_config ADD COLUMN model TEXT NOT NULL DEFAULT ''`
+		alterMultiMessage = `ALTER TABLE guild_config ADD COLUMN multi_message BOOLEAN NOT NULL DEFAULT FALSE`
 		promptTable = `CREATE TABLE IF NOT EXISTS guild_prompt_config (
 			guild_id            TEXT PRIMARY KEY,
 			guild_system_prompt TEXT NOT NULL,
@@ -144,13 +150,15 @@ func (d *Database) migrate() error {
 		)`
 	} else {
 		q = `CREATE TABLE IF NOT EXISTS guild_config (
-			guild_id   TEXT PRIMARY KEY,
-			api_key    TEXT NOT NULL,
-			provider   TEXT NOT NULL,
-			model      TEXT NOT NULL DEFAULT '',
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			guild_id      TEXT PRIMARY KEY,
+			api_key       TEXT NOT NULL,
+			provider      TEXT NOT NULL,
+			model         TEXT NOT NULL DEFAULT '',
+			multi_message INTEGER NOT NULL DEFAULT 0,
+			updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`
-		alter = `ALTER TABLE guild_config ADD COLUMN model TEXT NOT NULL DEFAULT ''`
+		alterModel = `ALTER TABLE guild_config ADD COLUMN model TEXT NOT NULL DEFAULT ''`
+		alterMultiMessage = `ALTER TABLE guild_config ADD COLUMN multi_message INTEGER NOT NULL DEFAULT 0`
 		promptTable = `CREATE TABLE IF NOT EXISTS guild_prompt_config (
 			guild_id            TEXT PRIMARY KEY,
 			guild_system_prompt TEXT NOT NULL,
@@ -168,7 +176,8 @@ func (d *Database) migrate() error {
 	if _, err := d.db.Exec(q); err != nil {
 		return err
 	}
-	_, _ = d.db.Exec(alter)
+	_, _ = d.db.Exec(alterModel)
+	_, _ = d.db.Exec(alterMultiMessage)
 	if _, err := d.db.Exec(promptTable); err != nil {
 		return err
 	}
@@ -215,15 +224,17 @@ func (d *Database) format(query string) string {
 }
 
 func (d *Database) GetGuildConfig(guildID string) (*GuildConfig, error) {
-	q := d.format("SELECT guild_id, api_key, provider, model FROM guild_config WHERE guild_id = ?")
+	q := d.format("SELECT guild_id, api_key, provider, model, multi_message FROM guild_config WHERE guild_id = ?")
 	row := d.db.QueryRow(q, guildID)
 
 	cfg := &GuildConfig{}
-	if err := row.Scan(&cfg.GuildID, &cfg.APIKey, &cfg.Provider, &cfg.Model); err == sql.ErrNoRows {
+	var multiMessage int
+	if err := row.Scan(&cfg.GuildID, &cfg.APIKey, &cfg.Provider, &cfg.Model, &multiMessage); err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
+	cfg.MultiMessage = multiMessage != 0
 
 	apiKey, err := d.decryptAPIKey(cfg.APIKey)
 	if err != nil {
@@ -260,6 +271,28 @@ func (d *Database) SetGuildConfig(guildID, apiKey, provider, model string) error
 				 updated_at = CURRENT_TIMESTAMP`)
 	}
 	_, err = d.db.Exec(q, guildID, encryptedAPIKey, provider, model)
+	return err
+}
+
+func (d *Database) SetGuildMultiMessage(guildID string, enabled bool) error {
+	val := 0
+	if enabled {
+		val = 1
+	}
+	var q string
+	switch d.driver {
+	case "mysql":
+		q = `INSERT INTO guild_config (guild_id, api_key, provider, model, multi_message, updated_at)
+			 VALUES (?, '', '', '', ?, CURRENT_TIMESTAMP)
+			 ON DUPLICATE KEY UPDATE multi_message = VALUES(multi_message), updated_at = CURRENT_TIMESTAMP`
+	default:
+		q = d.format(`INSERT INTO guild_config (guild_id, api_key, provider, model, multi_message, updated_at)
+			 VALUES (?, '', '', '', ?, CURRENT_TIMESTAMP)
+			 ON CONFLICT(guild_id) DO UPDATE SET
+				 multi_message = excluded.multi_message,
+				 updated_at = CURRENT_TIMESTAMP`)
+	}
+	_, err := d.db.Exec(q, guildID, val)
 	return err
 }
 

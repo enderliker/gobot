@@ -30,7 +30,7 @@ func NewMistral() *Mistral { return &Mistral{} }
 
 func (m *Mistral) Name() string { return "Mistral" }
 
-const mistralMaxTokens = 1024
+const mistralMaxTokens = 900
 
 func (m *Mistral) Validate(ctx context.Context, apiKey string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.mistral.ai/v1/models", nil)

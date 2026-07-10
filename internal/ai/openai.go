@@ -82,7 +82,7 @@ func (o *OpenAI) Ask(ctx context.Context, apiKey, model string, prompt PromptEnv
 			{"role": "system", "content": buildOpenAISystemPrompt(prompt)},
 			{"role": "user", "content": prompt.UserPrompt},
 		},
-		"max_tokens": 1000,
+		"max_tokens": 900,
 	}
 	if len(tools) > 0 {
 		payload["tools"] = openAITools(tools)

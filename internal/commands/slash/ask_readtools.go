@@ -271,22 +271,22 @@ func handleAuditLogTool(s *discordgo.Session, i *discordgo.InteractionCreate, ca
 			}
 
 			actionTypes := map[discordgo.AuditLogAction]string{
-				discordgo.AuditLogActionMemberKick:            "Kicked Member",
-				discordgo.AuditLogActionMemberBanAdd:          "Banned Member",
-				discordgo.AuditLogActionMemberBanRemove:       "Unbanned Member",
-				discordgo.AuditLogActionMemberUpdate:          "Updated Member",
-				discordgo.AuditLogActionMemberRoleUpdate:      "Updated Member Roles",
-				discordgo.AuditLogActionChannelCreate:         "Created Channel",
-				discordgo.AuditLogActionChannelUpdate:         "Updated Channel",
-				discordgo.AuditLogActionChannelDelete:         "Deleted Channel",
-				discordgo.AuditLogActionRoleCreate:            "Created Role",
-				discordgo.AuditLogActionRoleUpdate:            "Updated Role",
-				discordgo.AuditLogActionRoleDelete:            "Deleted Role",
-				discordgo.AuditLogActionMessagePin:            "Pinned Message",
-				discordgo.AuditLogActionMessageUnpin:          "Unpinned Message",
-				discordgo.AuditLogActionMemberDisconnect:      "Voice Disconnect",
-				discordgo.AuditLogActionMemberMove:            "Voice Move",
-				discordgo.AuditLogActionMessageBulkDelete:     "Bulk Delete Messages",
+				discordgo.AuditLogActionMemberKick:        "Kicked Member",
+				discordgo.AuditLogActionMemberBanAdd:      "Banned Member",
+				discordgo.AuditLogActionMemberBanRemove:   "Unbanned Member",
+				discordgo.AuditLogActionMemberUpdate:      "Updated Member",
+				discordgo.AuditLogActionMemberRoleUpdate:  "Updated Member Roles",
+				discordgo.AuditLogActionChannelCreate:     "Created Channel",
+				discordgo.AuditLogActionChannelUpdate:     "Updated Channel",
+				discordgo.AuditLogActionChannelDelete:     "Deleted Channel",
+				discordgo.AuditLogActionRoleCreate:        "Created Role",
+				discordgo.AuditLogActionRoleUpdate:        "Updated Role",
+				discordgo.AuditLogActionRoleDelete:        "Deleted Role",
+				discordgo.AuditLogActionMessagePin:        "Pinned Message",
+				discordgo.AuditLogActionMessageUnpin:      "Unpinned Message",
+				discordgo.AuditLogActionMemberDisconnect:  "Voice Disconnect",
+				discordgo.AuditLogActionMemberMove:        "Voice Move",
+				discordgo.AuditLogActionMessageBulkDelete: "Bulk Delete Messages",
 			}
 
 			var actionType discordgo.AuditLogAction

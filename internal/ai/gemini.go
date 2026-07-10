@@ -25,9 +25,9 @@ type geminiErrorDetails struct {
 
 type geminiErrorResponse struct {
 	Error struct {
-		Message string `json:"message"`
-		Status  string `json:"status"`
-		Code    int    `json:"code"`
+		Message string               `json:"message"`
+		Status  string               `json:"status"`
+		Code    int                  `json:"code"`
 		Details []geminiErrorDetails `json:"details"`
 	} `json:"error"`
 }
@@ -75,7 +75,7 @@ func NewGemini() *Gemini { return &Gemini{} }
 
 func (g *Gemini) Name() string { return "Gemini" }
 
-const geminiMaxOutputTokens = 1024
+const geminiMaxOutputTokens = 900
 
 func (g *Gemini) Validate(ctx context.Context, apiKey string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildGeminiModelsURL(apiKey), nil)
@@ -98,16 +98,16 @@ func (g *Gemini) Validate(ctx context.Context, apiKey string) error {
 
 func (g *Gemini) ListModels(ctx context.Context, apiKey string) ([]string, error) {
 	return []string{
-		"gemini-3.5-flash",          // texto/chat, generación más nueva
-		"gemini-3.1-flash-lite",     // texto/chat, liviano
+		"gemini-3.5-flash",      // texto/chat, generación más nueva
+		"gemini-3.1-flash-lite", // texto/chat, liviano
 
-		"gemini-2.5-pro",            // texto/chat (deprecated, apaga 16 oct 2026)
-		"gemini-2.5-flash",          // texto/chat (deprecated, apaga 16 oct 2026)
+		"gemini-2.5-pro",   // texto/chat (deprecated, apaga 16 oct 2026)
+		"gemini-2.5-flash", // texto/chat (deprecated, apaga 16 oct 2026)
 
-		"gemini-3-pro-image",         // imagen — Nano Banana Pro
-		"gemini-3.1-flash-image",     // imagen — Nano Banana 2
-		"gemini-3.1-flash-lite-image",// imagen — Nano Banana 2 Lite
-		"gemini-2.5-flash-image",     // imagen — Nano Banana (original)
+		"gemini-3-pro-image",          // imagen — Nano Banana Pro
+		"gemini-3.1-flash-image",      // imagen — Nano Banana 2
+		"gemini-3.1-flash-lite-image", // imagen — Nano Banana 2 Lite
+		"gemini-2.5-flash-image",      // imagen — Nano Banana (original)
 
 		// "gemini-3.5-flash-image" NO EXISTE (404) — la familia 3.5 todavía
 		// no tiene variante de imagen propia. No la agregues.
