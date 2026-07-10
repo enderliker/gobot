@@ -2,6 +2,7 @@ package slash
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -571,6 +572,21 @@ func allowedMentionsForActor(i *discordgo.InteractionCreate) *discordgo.MessageA
 	}
 }
 
+// isNonRetryableDiscordEditError returns true for Discord errors that mean the
+// target message or interaction no longer exists. Retrying would always fail.
+func isNonRetryableDiscordEditError(err error) bool {
+	var restErr *discordgo.RESTError
+	if !errors.As(err, &restErr) || restErr == nil || restErr.Message == nil {
+		return false
+	}
+	switch restErr.Message.Code {
+	case discordgo.ErrCodeUnknownMessage,  // 10008 — message deleted (e.g. by purge)
+		10062:                              // 10062 — interaction expired / unknown interaction
+		return true
+	}
+	return false
+}
+
 func editDeferredInteractionResponseWithRetry(s *discordgo.Session, i *discordgo.InteractionCreate, edit *discordgo.WebhookEdit) error {
 	const maxAttempts = 3
 	delays := []time.Duration{1 * time.Second, 3 * time.Second}
@@ -585,6 +601,10 @@ func editDeferredInteractionResponseWithRetry(s *discordgo.Session, i *discordgo
 		}
 		_, lastErr = s.InteractionResponseEdit(i.Interaction, edit)
 		if lastErr == nil {
+			return nil
+		}
+		// These errors mean the message/interaction no longer exists — no point retrying.
+		if isNonRetryableDiscordEditError(lastErr) {
 			return nil
 		}
 		log.Printf("[ASK] deferred edit attempt %d/%d failed: %v", attempt+1, maxAttempts, lastErr)

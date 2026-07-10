@@ -376,9 +376,18 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if len(messages) == 0 {
 			return nil
 		}
+		// Exclude the bot's own messages to avoid deleting in-progress interaction
+		// responses (e.g., the public notice posted right before this confirmation).
+		botID := session.State.User.ID
 		messageIDs := make([]string, 0, len(messages))
 		for _, msg := range messages {
+			if msg.Author != nil && msg.Author.ID == botID {
+				continue
+			}
 			messageIDs = append(messageIDs, msg.ID)
+		}
+		if len(messageIDs) == 0 {
+			return nil
 		}
 		return normalizeDiscordToolActionError(session.ChannelMessagesBulkDelete(channelID, messageIDs))
 	case "member_info":
