@@ -1,9 +1,11 @@
 package slash
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"gobot/internal/ai"
 	"gobot/internal/database"
@@ -28,6 +30,8 @@ func handleReadTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *
 		return handleAuditLogTool(s, i, call)
 	case "voice_status":
 		return handleVoiceStatusTool(s, i)
+	case "web_search":
+		return handleWebSearchTool(s, i, call)
 	}
 	return false
 }
@@ -360,6 +364,46 @@ func handleVoiceStatusTool(s *discordgo.Session, i *discordgo.InteractionCreate)
 		Title:       "Server Voice Status",
 		Description: sb.String(),
 		Color:       0x57F287, // Green
+	}
+
+	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
+	return true
+}
+
+func handleWebSearchTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	results, err := ai.CallTavilySearch(ctx, call.Query)
+	if err != nil {
+		embed := embeds.Error("Web Search Error", fmt.Sprintf("Failed to perform web search: %v", err))
+		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
+		return true
+	}
+
+	if len(results) == 0 {
+		embed := embeds.Error("No Results Found", fmt.Sprintf("No web search results found for %q", call.Query))
+		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
+		return true
+	}
+
+	var sb strings.Builder
+	for idx, res := range results {
+		title := res.Title
+		if len(title) > 100 {
+			title = title[:97] + "..."
+		}
+		content := res.Content
+		if len(content) > 300 {
+			content = content[:297] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("**%d. [%s](%s)**\n%s\n\n", idx+1, title, res.URL, content))
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       fmt.Sprintf("Web Search Results: %s", call.Query),
+		Description: sb.String(),
+		Color:       0x00B0F4,
 	}
 
 	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})

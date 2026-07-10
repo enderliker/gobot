@@ -13,6 +13,7 @@ import (
 )
 
 func TestPrepareAskProviderRequestScopesToolsAndKeepsTextJSONAsText(t *testing.T) {
+	t.Setenv("TAVILY_API_KEY", "")
 	d := newSlashTestDatabase(t)
 	if err := d.SetGuildSystemPrompt("guild-1", "Answer with server-specific terminology when useful."); err != nil {
 		t.Fatalf("set guild system prompt: %v", err)
@@ -222,4 +223,24 @@ func (p *capturingAskProvider) Ask(ctx context.Context, apiKey, model string, pr
 	p.receivedPrompt = prompt
 	p.receivedTools = append([]ai.ToolDefinition(nil), tools...)
 	return p.result, p.err
+}
+
+func TestWebSearchToolIsIncludedWhenApiKeyIsSet(t *testing.T) {
+	t.Setenv("TAVILY_API_KEY", "test-tavily-key")
+	session, guildID := seedOwnerOnlySession(t)
+	member := &discordgo.Member{
+		User:  &discordgo.User{ID: "user-1"},
+		Roles: []string{"role-member"},
+	}
+	tools := ai.ModerationToolsForMember(session, guildID, member)
+	var hasWebSearch bool
+	for _, tool := range tools {
+		if tool.Name == "web_search" {
+			hasWebSearch = true
+			break
+		}
+	}
+	if !hasWebSearch {
+		t.Fatalf("expected web_search tool to be included in public tools when TAVILY_API_KEY is set")
+	}
 }

@@ -1,10 +1,14 @@
 package ai
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -22,6 +26,7 @@ type ToolCall struct {
 	TargetChannel string `json:"target_channel"`
 	MessageID     string `json:"message_id"`
 	Text          string `json:"text"`
+	Query         string `json:"query"`
 	Color         string `json:"color"`
 	Duration      int    `json:"duration"`
 	Reason        string `json:"reason"`
@@ -655,6 +660,21 @@ var moderationTools = []ToolDefinition{
 			"additionalProperties": false,
 		},
 	},
+	{
+		Name:        "web_search",
+		Description: "Perform a web search using Tavily to retrieve current or external information.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{
+					"type":        "string",
+					"description": "The search query to look up on the web.",
+				},
+			},
+			"required":             []string{"query"},
+			"additionalProperties": false,
+		},
+	},
 }
 
 const moderationToolPrompt = "You are a Discord server assistant. Use the provided moderation tools when the user is asking to ban, kick, timeout, mute, or otherwise moderate a member. The tool input field 'user' may contain an ID, mention, username, nickname, display name, initials, or other close textual reference from the request. If no moderation tool is required, answer normally."
@@ -729,6 +749,10 @@ func ModerationToolsForMember(session *discordgo.Session, guildID string, member
 	tools = append(tools, moderationToolNamed("role_list"))
 	tools = append(tools, moderationToolNamed("voice_status"))
 
+	if os.Getenv("TAVILY_API_KEY") != "" {
+		tools = append(tools, moderationToolNamed("web_search"))
+	}
+
 	if len(tools) == 0 {
 		return nil
 	}
@@ -762,6 +786,7 @@ func parseToolCallCandidate(s string) (*ToolCall, error) {
 	t.TargetChannel = strings.TrimSpace(t.TargetChannel)
 	t.MessageID = strings.TrimSpace(t.MessageID)
 	t.Text = strings.TrimSpace(t.Text)
+	t.Query = strings.TrimSpace(t.Query)
 	t.Color = strings.TrimSpace(t.Color)
 	t.Reason = strings.TrimSpace(t.Reason)
 
@@ -1290,6 +1315,7 @@ func validateToolCall(call *ToolCall) error {
 		"assign_role": true, "remove_role": true, "create_role": true, "delete_role": true, "role_info": true,
 		"server_info": true, "channel_info": true, "role_list": true, "audit_log": true, "voice_status": true,
 		"send_message": true, "pin_message": true, "unpin_message": true, "create_thread": true,
+		"web_search": true,
 	}
 
 	if !allTools[call.Tool] {
@@ -1300,7 +1326,7 @@ func validateToolCall(call *ToolCall) error {
 	readOnlyTools := map[string]bool{
 		"member_info": true, "warnings": true, "role_info": true,
 		"server_info": true, "channel_info": true, "role_list": true,
-		"audit_log": true, "voice_status": true,
+		"audit_log": true, "voice_status": true, "web_search": true,
 	}
 
 	isReadOnly := readOnlyTools[call.Tool]
@@ -1365,6 +1391,10 @@ func validateToolCall(call *ToolCall) error {
 		if call.Count != 0 && (call.Count < 1 || call.Count > 20) {
 			return fmt.Errorf("invalid log count")
 		}
+	case "web_search":
+		if call.Query == "" {
+			return fmt.Errorf("missing search query")
+		}
 	}
 
 	return nil
@@ -1380,6 +1410,7 @@ func ConfirmationText(call *ToolCall, target string) string {
 	roleEscaped := sanitizeInlineCode(call.RoleID)
 	channelEscaped := sanitizeInlineCode(call.TargetChannel)
 	msgIDEcaped := sanitizeInlineCode(call.MessageID)
+	queryEscaped := sanitizeInlineCode(call.Query)
 
 	switch call.Tool {
 	case "ban":
@@ -1434,6 +1465,8 @@ func ConfirmationText(call *ToolCall, target string) string {
 		return fmt.Sprintf("Unpin message `%s` for `%s`?", msgIDEcaped, reason)
 	case "create_thread":
 		return fmt.Sprintf("Create new thread `%s` for `%s`?", textEscaped, reason)
+	case "web_search":
+		return fmt.Sprintf("Perform a web search for `%s`?", queryEscaped)
 	default:
 		return "Confirm this action?"
 	}
@@ -1539,4 +1572,67 @@ func parseHexColor(hexStr string) *int {
 		return nil
 	}
 	return &val
+}
+
+var tavilySearchURL = "https://api.tavily.com/search"
+
+type TavilySearchResult struct {
+	Title   string  `json:"title"`
+	URL     string  `json:"url"`
+	Content string  `json:"content"`
+	Score   float64 `json:"score"`
+}
+
+type TavilySearchResponse struct {
+	Results []TavilySearchResult `json:"results"`
+}
+
+type TavilySearchRequest struct {
+	APIKey      string `json:"api_key"`
+	Query       string `json:"query"`
+	SearchDepth string `json:"search_depth,omitempty"`
+	MaxResults  int    `json:"max_results,omitempty"`
+}
+
+func CallTavilySearch(ctx context.Context, query string) ([]TavilySearchResult, error) {
+	apiKey := os.Getenv("TAVILY_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("TAVILY_API_KEY env var not set")
+	}
+
+	reqPayload := TavilySearchRequest{
+		APIKey:      apiKey,
+		Query:       query,
+		SearchDepth: "basic",
+		MaxResults:  5,
+	}
+
+	body, err := json.Marshal(reqPayload)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tavilySearchURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("tavily search failed (status %d): %s", resp.StatusCode, string(b))
+	}
+
+	var searchResp TavilySearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, err
+	}
+
+	return searchResp.Results, nil
 }
