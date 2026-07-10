@@ -378,6 +378,10 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 					Components: []discordgo.MessageComponent{},
 				},
 			})
+			notice := "The proposed moderation action has expired."
+			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+				Content: &notice,
+			})
 			once.Do(func() {
 				close(done)
 				removeHandler()
@@ -394,6 +398,10 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 					Embeds:     []*discordgo.MessageEmbed{embeds.AIConfirmation("Moderation action cancelled.")},
 					Components: []discordgo.MessageComponent{},
 				},
+			})
+			notice := "The proposed moderation action was cancelled."
+			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+				Content: &notice,
 			})
 			once.Do(func() {
 				close(done)
@@ -464,6 +472,7 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 		}
 
 		var embed *discordgo.MessageEmbed
+		var notice string
 		if data.CustomID == confirmID {
 			if err := ai.ExecuteTool(s, i.GuildID, i.Member, call); err != nil {
 				auditInteraction(ic, "tool_call_confirmed", toolExecutionOutcome(err), mergeAuditFields(
@@ -471,9 +480,11 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 					map[string]any{"error": err.Error()},
 				))
 				embed = toolExecutionErrorEmbed(err)
+				notice = "The proposed moderation action was confirmed but failed to execute."
 			} else {
 				auditInteraction(ic, "tool_call_confirmed", "success", toolAuditFields(auditViewFromToolCall(call.Tool, requestedTarget, call.User, call.Reason)))
 				embed = embeds.AIConfirmation("Moderation action completed.")
+				notice = "The proposed moderation action has been confirmed and executed."
 			}
 		}
 
@@ -484,6 +495,12 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 				Components: []discordgo.MessageComponent{},
 			},
 		})
+
+		if notice != "" {
+			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+				Content: &notice,
+			})
+		}
 
 		once.Do(func() {
 			close(done)
@@ -523,6 +540,10 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 			return
 		case <-time.After(toolConfirmationTimeout):
 			expired.Store(true)
+			notice := "The proposed moderation action has expired."
+			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+				Content: &notice,
+			})
 		}
 	})
 
