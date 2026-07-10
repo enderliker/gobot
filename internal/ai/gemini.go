@@ -32,37 +32,37 @@ type geminiErrorResponse struct {
 	} `json:"error"`
 }
 
-// parseGeminiError extracts the human-readable message from a Gemini API error
-// response body. Falls back to the raw body if parsing fails.
 func parseGeminiError(status int, body []byte) error {
 	var apiErr geminiErrorResponse
 	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Error.Message != "" {
 		msg := apiErr.Error.Message
-		var extra []string
-		for _, d := range apiErr.Error.Details {
-			if d.RetryDelay != "" {
-				extra = append(extra, fmt.Sprintf("Please retry in %s.", d.RetryDelay))
-			}
-			for _, v := range d.Violations {
-				limitVal := ""
-				if v.QuotaLimit != nil {
-					limitVal = fmt.Sprintf("%v", v.QuotaLimit)
-				} else if v.QuotaLimit2 != nil {
-					limitVal = fmt.Sprintf("%v", v.QuotaLimit2)
+		if status == http.StatusTooManyRequests && apiErr.Error.Status == "RESOURCE_EXHAUSTED" {
+			var extra []string
+			for _, d := range apiErr.Error.Details {
+				if d.RetryDelay != "" {
+					extra = append(extra, fmt.Sprintf("Please retry in %s.", d.RetryDelay))
 				}
-				if limitVal != "" {
-					metric := v.QuotaMetric
-					if metric == "" {
-						metric = "requests"
+				for _, v := range d.Violations {
+					limitVal := ""
+					if v.QuotaLimit != nil {
+						limitVal = fmt.Sprintf("%v", v.QuotaLimit)
+					} else if v.QuotaLimit2 != nil {
+						limitVal = fmt.Sprintf("%v", v.QuotaLimit2)
 					}
-					extra = append(extra, fmt.Sprintf("limit: %s (metric: %s)", limitVal, metric))
-				} else if v.Description != "" {
-					extra = append(extra, v.Description)
+					if limitVal != "" {
+						metric := v.QuotaMetric
+						if metric == "" {
+							metric = "requests"
+						}
+						extra = append(extra, fmt.Sprintf("limit: %s (metric: %s)", limitVal, metric))
+					} else if v.Description != "" {
+						extra = append(extra, v.Description)
+					}
 				}
 			}
-		}
-		if len(extra) > 0 {
-			msg = msg + " * " + strings.Join(extra, " * ")
+			if len(extra) > 0 {
+				msg = msg + " * " + strings.Join(extra, " * ")
+			}
 		}
 		return fmt.Errorf("gemini (%d %s): %s", status, apiErr.Error.Status, msg)
 	}
