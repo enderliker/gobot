@@ -471,7 +471,7 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 			return
 		}
 
-		if selected == nil {
+		if selected == nil && call.Tool != "purge" {
 			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
