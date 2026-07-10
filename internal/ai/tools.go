@@ -30,22 +30,25 @@ const (
 )
 
 const (
-	toolErrTargetUserNotResolved               = "target user is not resolved"
-	toolErrTargetMemberNotFound                = "target member not found"
-	toolErrTargetMemberLookupFailed            = "unable to retrieve the target member"
-	toolErrBotMemberNotFound                   = "bot member not found in this server"
-	toolErrBotMemberLookupFailed               = "unable to verify the bot's server membership"
-	toolErrRoleHierarchyPreventsAction         = "role hierarchy prevents this action"
-	toolErrBotRoleHierarchyPreventsAction      = "bot role hierarchy prevents this action"
-	toolErrMissingBanMembersPermission         = "missing Ban Members permission"
-	toolErrBotMissingBanMembersPermission      = "bot is missing Ban Members permission"
-	toolErrMissingKickMembersPermission        = "missing Kick Members permission"
-	toolErrBotMissingKickMembersPermission     = "bot is missing Kick Members permission"
-	toolErrMissingModerateMembersPermission    = "missing Moderate Members permission"
-	toolErrBotMissingModerateMembersPermission = "bot is missing Moderate Members permission"
-	toolErrDiscordMissingPermissions           = "Discord denied the moderation action due to missing permissions."
-	toolErrDiscordActionRejected               = "Discord rejected the moderation action. Please verify the member state and bot permissions."
-	toolErrUnknownTool                         = "unknown tool"
+	toolErrTargetUserNotResolved                  = "target user is not resolved"
+	toolErrTargetMemberNotFound                   = "target member not found"
+	toolErrTargetMemberLookupFailed               = "unable to retrieve the target member"
+	toolErrBotMemberNotFound                      = "bot member not found in this server"
+	toolErrBotMemberLookupFailed                  = "unable to verify the bot's server membership"
+	toolErrRoleHierarchyPreventsAction            = "role hierarchy prevents this action"
+	toolErrBotRoleHierarchyPreventsAction         = "bot role hierarchy prevents this action"
+	toolErrMissingBanMembersPermission            = "missing Ban Members permission"
+	toolErrBotMissingBanMembersPermission         = "bot is missing Ban Members permission"
+	toolErrMissingKickMembersPermission           = "missing Kick Members permission"
+	toolErrBotMissingKickMembersPermission        = "bot is missing Kick Members permission"
+	toolErrMissingModerateMembersPermission       = "missing Moderate Members permission"
+	toolErrBotMissingModerateMembersPermission    = "bot is missing Moderate Members permission"
+	toolErrMissingManageMessagesPermission        = "missing Manage Messages permission"
+	toolErrBotMissingManageMessagesPermission     = "bot is missing Manage Messages permission"
+	toolErrMissingAdminPermission                 = "missing Administrator permission"
+	toolErrDiscordMissingPermissions              = "Discord denied the moderation action due to missing permissions."
+	toolErrDiscordActionRejected                  = "Discord rejected the moderation action. Please verify the member state and bot permissions."
+	toolErrUnknownTool                            = "unknown tool"
 )
 
 var moderationTools = []ToolDefinition{
@@ -204,6 +207,10 @@ func ModerationToolsForMember(session *discordgo.Session, guildID string, member
 	tools := make([]ToolDefinition, 0, len(moderationTools))
 	if hasPermission(session, guildID, member, discordgo.PermissionBanMembers) {
 		tools = append(tools, moderationToolNamed("ban"))
+	}
+	// unban requires Administrator because the bot cannot verify who applied the original ban;
+	// allowing a BanMembers-only mod to unban could circumvent a ban applied by a superior.
+	if hasPermission(session, guildID, member, discordgo.PermissionAdministrator) {
 		tools = append(tools, moderationToolNamed("unban"))
 	}
 	if hasPermission(session, guildID, member, discordgo.PermissionKickMembers) {
@@ -320,8 +327,11 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		}
 		return normalizeDiscordToolActionError(session.GuildBanCreateWithReason(guildID, call.User, call.Reason, 0))
 	case "unban":
-		if !hasPermission(session, guildID, actor, discordgo.PermissionBanMembers) {
-			return fmt.Errorf(toolErrMissingBanMembersPermission)
+		// Require Administrator: without the ban audit log we cannot verify who applied
+		// the ban, so we restrict unban to admins/owner to prevent a lower-ranked mod
+		// from reversing a ban applied by a superior.
+		if !hasPermission(session, guildID, actor, discordgo.PermissionAdministrator) {
+			return fmt.Errorf(toolErrMissingAdminPermission)
 		}
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionBanMembers) {
 			return fmt.Errorf(toolErrBotMissingBanMembersPermission)
@@ -354,10 +364,10 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		return normalizeDiscordToolActionError(session.GuildMemberTimeout(guildID, call.User, nil))
 	case "purge":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageMessages) {
-			return fmt.Errorf("missing Manage Messages permission")
+			return fmt.Errorf(toolErrMissingManageMessagesPermission)
 		}
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionManageMessages) {
-			return fmt.Errorf("bot is missing Manage Messages permission")
+			return fmt.Errorf(toolErrBotMissingManageMessagesPermission)
 		}
 		messages, err := session.ChannelMessages(channelID, call.Count, "", "", "")
 		if err != nil {
@@ -418,6 +428,9 @@ func isToolExecutionBusinessMessage(msg string) bool {
 		toolErrBotMissingKickMembersPermission,
 		toolErrMissingModerateMembersPermission,
 		toolErrBotMissingModerateMembersPermission,
+		toolErrMissingManageMessagesPermission,
+		toolErrBotMissingManageMessagesPermission,
+		toolErrMissingAdminPermission,
 		toolErrDiscordMissingPermissions,
 		toolErrDiscordActionRejected,
 		toolErrUnknownTool:
@@ -556,7 +569,9 @@ func hasPermission(session *discordgo.Session, guildID string, member *discordgo
 
 func memberAbove(session *discordgo.Session, guildID string, actor, target *discordgo.Member) bool {
 	guild, err := session.State.Guild(guildID)
-	if err != nil || guild == nil {
+	// Fall back to the API if the state doesn't have this guild OR if the state
+	// guild has no roles loaded (can happen after reconnection on large guilds).
+	if err != nil || guild == nil || len(guild.Roles) == 0 {
 		guild, err = session.Guild(guildID)
 		if err != nil {
 			return false

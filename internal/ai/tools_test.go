@@ -112,6 +112,31 @@ func TestModerationToolsForMemberIncludesAllToolsForAdministrator(t *testing.T) 
 	}
 }
 
+func TestModerationToolsForMemberExcludesUnbanForBanMembersOnlyMod(t *testing.T) {
+	session, guildID := seedPermissionTestSession(t, "owner-1", []*discordgo.Role{
+		{
+			ID:          "role-mod",
+			Permissions: discordgo.PermissionBanMembers | discordgo.PermissionKickMembers,
+		},
+	})
+
+	member := &discordgo.Member{
+		User:  &discordgo.User{ID: "mod-1"},
+		Roles: []string{"role-mod"},
+	}
+
+	tools := ModerationToolsForMember(session, guildID, member)
+	for _, tool := range tools {
+		if tool.Name == "unban" {
+			t.Fatalf("expected BanMembers-only moderator to NOT receive unban tool, but it was included")
+		}
+	}
+	// Should get ban and kick but not unban
+	if got, want := toolNames(tools), []string{"ban", "kick", "member_info"}; !equalStrings(got, want) {
+		t.Fatalf("expected BanMembers+KickMembers mod tools [ban kick member_info], got %v", got)
+	}
+}
+
 func TestUserFacingToolExecutionErrorKeepsBusinessReason(t *testing.T) {
 	err := errors.New(toolErrRoleHierarchyPreventsAction)
 
