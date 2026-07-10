@@ -94,6 +94,14 @@ func (d *Database) Close() error {
 	return d.db.Close()
 }
 
+// RawDB exposes the underlying SQL database handle for standalone metrics/web queries.
+func (d *Database) RawDB() *sql.DB {
+	if d == nil {
+		return nil
+	}
+	return d.db
+}
+
 func (d *Database) migrate() error {
 	var q string
 	var alterModel string

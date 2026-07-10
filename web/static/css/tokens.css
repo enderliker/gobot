@@ -1,0 +1,48 @@
+@font-face {
+    font-family: 'Space Mono';
+    src: url('/static/fonts/SpaceMono-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Public Sans';
+    src: url('/static/fonts/PublicSans-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+:root {
+    /* Color Palette */
+    --color-bg: #0B0C0F;
+    --color-bg-alt: #12141C;
+    --color-bg-card: #181B26;
+    
+    --color-fg: #F2F2F0;
+    --color-fg-muted: #A0A5B5;
+    
+    /* Accent Colors */
+    --color-accent: #5EEAD4;       /* Mint Teal */
+    --color-accent-hover: #2DD4BF;
+    --color-accent-rgb: 94, 234, 212;
+    
+    --color-warning: #FFB86B;      /* Amber Accent (Human Confirmation Required) */
+    --color-danger: #EF4444;       /* Soft red */
+    
+    /* Typography */
+    --font-mono: 'Space Mono', 'JetBrains Mono', Monaco, Consolas, monospace;
+    --font-sans: 'Public Sans', 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    
+    /* Border Radii (Intentional variation) */
+    --radius-btn: 4px;
+    --radius-card: 14px;
+    --radius-badge: 2px;
+    --radius-terminal: 8px;
+    
+    /* Transitions */
+    --transition-fast: 150ms ease-out;
+    --transition-normal: 250ms ease-out;
+}
+

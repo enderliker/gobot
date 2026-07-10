@@ -7,6 +7,7 @@
 /build/
 /app
 /gobot
+/gobot-web
 /gobot.db
 /*.db
 /*.sqlite

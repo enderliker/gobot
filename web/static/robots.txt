@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://gobot.enderliker.com/static/sitemap.xml

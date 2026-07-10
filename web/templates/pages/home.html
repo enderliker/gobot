@@ -1,0 +1,267 @@
+{{define "content"}}
+<!-- Hero Section -->
+<section class="hero-section">
+    <div class="container hero-container">
+        <div class="hero-content">
+            <div class="badge-status">
+                <span class="pulse-indicator"></span>
+                <span>OPEN SOURCE · GO 1.25</span>
+            </div>
+            <h1 class="hero-title">IA para tu Discord sin perder el control administrativo</h1>
+            <p class="hero-subtitle">
+                Integra a Gemini, OpenAI, Anthropic y Mistral usando tus propias API keys. gobot busca en la web y propone herramientas de moderación, pero <strong>nunca ejecuta acciones destructivas sin confirmación humana directa.</strong>
+            </p>
+            <div class="hero-ctas">
+                <a href="/invite" class="btn-primary" target="_blank" rel="noopener">Invitar a mi Servidor</a>
+                <a href="/invite" class="btn-secondary" target="_blank" rel="noopener">Configurar Bot</a>
+            </div>
+        </div>
+        <div class="hero-visual">
+            <div class="terminal-mockup">
+                <div class="terminal-header">
+                    <div class="terminal-dots">
+                        <span class="dot close"></span>
+                        <span class="dot minimize"></span>
+                        <span class="dot maximize"></span>
+                    </div>
+                    <div class="terminal-title">discord-client-simulation</div>
+                </div>
+                <div class="terminal-body" id="terminalDemo">
+                    <!-- Discord Chat Simulation (Animated via JS) -->
+                    <div class="discord-message" id="msgUser">
+                        <div class="discord-avatar user-avatar">&gt;_</div>
+                        <div class="discord-content">
+                            <span class="discord-author">Moderador</span>
+                            <span class="discord-time">Hoy a las 17:00</span>
+                            <div class="discord-text"><span class="highlight-command">/ask</span> question: "banea a @SpamBot por mandar links de phishing"</div>
+                        </div>
+                    </div>
+                    
+                    <div class="discord-message hidden" id="msgBotThinking">
+                        <div class="discord-avatar bot-avatar">AI</div>
+                        <div class="discord-content">
+                            <span class="discord-author bot-badge">gobot <span class="badge-tag">BOT</span></span>
+                            <span class="discord-time">Hoy a las 17:00</span>
+                            <div class="discord-text-thinking">gobot está pensando...</div>
+                        </div>
+                    </div>
+
+                    <div class="discord-message hidden" id="msgBotConfirmation">
+                        <div class="discord-avatar bot-avatar">AI</div>
+                        <div class="discord-content">
+                            <span class="discord-author bot-badge">gobot <span class="badge-tag">BOT</span></span>
+                            <span class="discord-time">Hoy a las 17:00</span>
+                            <div class="discord-embed warning-embed">
+                                <div class="embed-title">⚠️ REQUIERE CONFIRMACIÓN HUMANA</div>
+                                <div class="embed-desc">La IA ha propuesto la siguiente acción basada en el prompt:</div>
+                                <div class="embed-fields">
+                                    <div class="embed-field"><strong>Acción:</strong> Ban (Baneo Permanente)</div>
+                                    <div class="embed-field"><strong>Miembro:</strong> @SpamBot (ID: 10294857501)</div>
+                                    <div class="embed-field"><strong>Razón:</strong> Enviar enlaces de phishing detectados por moderación.</div>
+                                </div>
+                                <div class="embed-actions">
+                                    <button class="btn-embed-confirm" id="btnDemoConfirm">Confirmar Acción</button>
+                                    <button class="btn-embed-cancel" disabled>Cancelar</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="discord-message hidden" id="msgBotSuccess">
+                        <div class="discord-avatar bot-avatar">AI</div>
+                        <div class="discord-content">
+                            <span class="discord-author bot-badge">gobot <span class="badge-tag">BOT</span></span>
+                            <span class="discord-time">Hoy a las 17:01</span>
+                            <div class="discord-text">✅ **Acción Completada**: @SpamBot ha sido baneado permanentemente del servidor. Razón: Enviar enlaces de phishing.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Live Stats Section -->
+<section class="stats-section hidden" id="liveStatsSection">
+    <div class="container stats-container">
+        <div class="stat-item">
+            <span class="stat-number" id="serverCount">0</span>
+            <span class="stat-label">Servidores Activos</span>
+        </div>
+    </div>
+</section>
+
+<!-- How It Works Section -->
+<section class="how-it-works" id="como-funciona">
+    <div class="container">
+        <h2 class="section-title">Cómo funciona gobot</h2>
+        <div class="flow-container">
+            <div class="flow-step">
+                <div class="step-num">01</div>
+                <h3>BYO-API-Key</h3>
+                <p>El dueño del servidor configura su API key con <code>/setkey</code>. Las claves se cifran con AES-256-GCM en la base de datos.</p>
+            </div>
+            <div class="flow-step">
+                <div class="step-num">02</div>
+                <h3>Pregunta e Interacción</h3>
+                <p>Cualquier usuario interactúa con la IA usando <code>/ask</code>. La IA tiene acceso a herramientas de lectura y moderación.</p>
+            </div>
+            <div class="flow-step">
+                <div class="step-num">03</div>
+                <h3>Frontera de Seguridad</h3>
+                <p>Si la IA determina que debe banear, expulsar o silenciar a alguien, gobot pausa el flujo y requiere aprobación humana.</p>
+            </div>
+            <div class="flow-step">
+                <div class="step-num">04</div>
+                <h3>Búsqueda Web en Vivo</h3>
+                <p>Si requiere datos actuales, busca en la web con Tavily y te resume los resultados sin saturar el canal de links.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Features Section -->
+<section class="features-section" id="features">
+    <div class="container">
+        <h2 class="section-title">Construido para Servidores Exigentes</h2>
+        <div class="features-grid">
+            <div class="feature-card large">
+                <div class="feature-icon">🛡️</div>
+                <h3>Confirmación Humana Garantizada</h3>
+                <p>La IA nunca actúa por sí sola cuando se trata de tomar decisiones administrativas en el servidor. Todas las acciones peligrosas o destructivas pasan por un riguroso paso interactivo de aprobación antes de interactuar con la API de Discord.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔑</div>
+                <h3>Cifrado en Reposo</h3>
+                <p>Las API keys del servidor no se exponen ni almacenan en texto plano. Se guardan cifradas usando un wrapper de cifrado simétrico AES-GCM-256.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔌</div>
+                <h3>Multi-IA Nativo</h3>
+                <p>Soporta múltiples proveedores principales: Gemini, OpenAI, Anthropic y Mistral. Cambia de modelo y proveedor al instante en caliente.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔍</div>
+                <h3>Web Search Integrado</h3>
+                <p>Búsquedas inteligentes usando la API de Tavily. La IA lee y te resume las noticias o eventos deportivos más recientes al instante.</p>
+            </div>
+            <div class="feature-card large">
+                <div class="feature-icon">⚡</div>
+                <h3>Escrito en Go y Altamente Optimizado</h3>
+                <p>A diferencia de bots en Python o NodeJS, gobot es extremadamente rápido y consume pocos recursos. Dispone de un transport personalizado que previene rate limits con la API de Discord de manera asíncrona.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Commands Section -->
+<section class="commands-section" id="comandos">
+    <div class="container">
+        <h2 class="section-title">Comandos de barra diagonal (/...)</h2>
+        <div class="commands-list">
+            <div class="command-item">
+                <div class="command-header">
+                    <span class="command-name">/ask</span>
+                    <span class="command-desc">Interactúa con el asistente de Inteligencia Artificial configurado.</span>
+                </div>
+                <div class="discord-message">
+                    <div class="discord-avatar user-avatar">U</div>
+                    <div class="discord-content">
+                        <span class="discord-author">Usuario</span>
+                        <div class="discord-text"><span class="highlight-command">/ask</span> question: "¿Cómo estuvo el partido de Paraguay hoy?"</div>
+                    </div>
+                </div>
+                <div class="discord-message">
+                    <div class="discord-avatar bot-avatar">AI</div>
+                    <div class="discord-content">
+                        <span class="discord-author bot-badge">gobot <span class="badge-tag">BOT</span></span>
+                        <div class="discord-text">Paraguay empató contra su rival hoy 0 - 0. Mostraron una defensa sólida durante los primeros 45 minutos.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="command-item">
+                <div class="command-header">
+                    <span class="command-name">/setkey</span>
+                    <span class="command-desc">Configura el proveedor de IA y almacena de forma segura tu API Key (Solo Propietario).</span>
+                </div>
+            </div>
+
+            <div class="command-item">
+                <div class="command-header">
+                    <span class="command-name">/config</span>
+                    <span class="command-desc">Habilita opciones avanzadas como dividir respuestas muy largas en varios mensajes.</span>
+                </div>
+            </div>
+
+            <div class="command-item">
+                <div class="command-header">
+                    <span class="command-name">/ping</span>
+                    <span class="command-desc">Obtén la latencia actual del bot a la pasarela de Discord y la API.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Self-Host Section -->
+<section class="self-host-section" id="self-host">
+    <div class="container self-host-container">
+        <div class="self-host-content">
+            <h2 class="section-title text-left">Autoalójalo tú mismo</h2>
+            <p>gobot es de código abierto y está diseñado para ser hospedado de forma autónoma con un consumo mínimo de recursos.</p>
+            <p>La base de datos SQLite embebida en Go puro no requiere controladores CGO, permitiendo despliegues limpios en un binario estático y ligero.</p>
+            <a href="/docs" class="btn-primary" target="_blank" rel="noopener">Leer Guía en GitHub</a>
+        </div>
+        <div class="self-host-code">
+            <div class="code-terminal">
+                <div class="terminal-header">
+                    <div class="terminal-dots">
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                    </div>
+                    <span class="terminal-title">docker-compose.yml</span>
+                </div>
+                <pre><code>services:
+  bot:
+    build: .
+    container_name: gobot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "8081:8081"
+    environment:
+      - WEB_PORT=8081</code></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Tech Stack Section -->
+<section class="tech-stack">
+    <div class="container text-center">
+        <h3 class="stack-title">Tecnologías</h3>
+        <div class="stack-badges">
+            <span class="badge">Go 1.25</span>
+            <span class="badge">discordgo v0.29.0</span>
+            <span class="badge">Gemini</span>
+            <span class="badge">OpenAI</span>
+            <span class="badge">Anthropic</span>
+            <span class="badge">Mistral</span>
+            <span class="badge">SQLite</span>
+            <span class="badge">PostgreSQL</span>
+            <span class="badge">MySQL</span>
+            <span class="badge">Docker</span>
+        </div>
+    </div>
+</section>
+{{end}}
