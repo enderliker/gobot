@@ -608,8 +608,8 @@ func TestAskExecuteLongResponseTruncation(t *testing.T) {
 		t.Fatalf("unmarshal original edit payload: %v", err)
 	}
 	content := payload["content"].(string)
-	if len(content) != 2000 {
-		t.Fatalf("expected content length to be truncated to exactly 2000, got %d", len(content))
+	if len(content) != 1800 {
+		t.Fatalf("expected content length to be truncated to exactly 1800, got %d", len(content))
 	}
 	if strings.Contains(content, "truncated") {
 		t.Fatalf("content should not contain the truncation suffix anymore")
