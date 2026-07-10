@@ -700,7 +700,7 @@ func sendEphemeralFollowupWithRetry(s *discordgo.Session, i *discordgo.Interacti
 }
 
 func plainAskResponseContent(answer string) string {
-	const maxContentLen = 1800
+	const maxContentLen = 2000
 	answer = strings.TrimSpace(answer)
 	if len(answer) <= maxContentLen {
 		return answer
