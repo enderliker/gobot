@@ -157,6 +157,32 @@ func init() {
 					}
 
 					if call := structuredToolCallFromAskResult(result); call != nil {
+						if call.Tool == "web_search" {
+							answer, err := executeWebSearchAndSynthesize(ctx, provider, cfg, call.Query, reqPrompt)
+							if err != nil {
+								if ctx.Err() != nil || lifecycle.IsShuttingDown() {
+									return
+								}
+								if !ai.IsUserFacingError(err) {
+									log.Printf("[ASK] web_search synthesize %s: %v", cfg.Provider, err)
+								}
+								embed = embeds.Error("Web Search Error", ai.UserFacingError(err))
+								_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+									Embeds:          &[]*discordgo.MessageEmbed{embed},
+									Components:      &[]discordgo.MessageComponent{},
+									AllowedMentions: allowedMentionsForActor(i),
+								})
+								return
+							}
+							answer = sanitizeAssistantVisibleText(answer, reqPrompt)
+							if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+								Content:         stringPtr(plainAskResponseContent(answer)),
+								AllowedMentions: allowedMentionsForActor(i),
+							}); err != nil {
+								log.Printf("[ASK] web_search response edit failed: %v", err)
+							}
+							return
+						}
 						if handleDirectReadTool(s, i, call) {
 							return
 						}
@@ -1006,4 +1032,31 @@ func handleDirectReadTool(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		Embeds: &[]*discordgo.MessageEmbed{embed},
 	})
 	return true
+}
+
+func executeWebSearchAndSynthesize(ctx context.Context, provider ai.Provider, cfg *database.GuildConfig, query string, basePrompt ai.PromptEnvelope) (string, error) {
+	results, err := ai.CallTavilySearch(ctx, query)
+	if err != nil {
+		return "", err
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Web search results for: ")
+	sb.WriteString(query)
+	sb.WriteString("\n\n")
+	for idx, r := range results {
+		sb.WriteString(fmt.Sprintf("[%d] %s\n%s\n\n", idx+1, r.Title, r.Content))
+	}
+
+	synthesisPrompt := ai.PromptEnvelope{
+		BaseSystem:  basePrompt.BaseSystem,
+		GuildSystem: basePrompt.GuildSystem,
+		UserPrompt:  sb.String() + "Using only the information above, answer the user's original question: " + query,
+	}
+
+	result, err := provider.Ask(ctx, cfg.APIKey, cfg.Model, synthesisPrompt, nil)
+	if err != nil {
+		return "", err
+	}
+	return result.Text, nil
 }
