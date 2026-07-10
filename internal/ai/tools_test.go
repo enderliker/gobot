@@ -88,7 +88,14 @@ func TestModerationToolsForMemberIncludesAllToolsForGuildOwner(t *testing.T) {
 	}
 
 	tools := ModerationToolsForMember(session, guildID, member)
-	if got, want := toolNames(tools), []string{"ban", "unban", "kick", "timeout", "untimeout", "purge", "member_info"}; !equalStrings(got, want) {
+	want := []string{
+		"ban", "unban", "kick", "warn", "warnings", "clear_warnings", "timeout", "untimeout", "purge",
+		"send_message", "pin_message", "unpin_message", "create_thread", "move_to_voice", "disconnect_voice",
+		"deafen", "undeafen", "slowmode", "lock_channel", "unlock_channel", "set_topic", "rename_channel",
+		"assign_role", "remove_role", "create_role", "delete_role", "role_info", "audit_log",
+		"member_info", "server_info", "channel_info", "role_list", "voice_status",
+	}
+	if got := toolNames(tools); !equalStrings(got, want) {
 		t.Fatalf("expected owner to receive all moderation tools, got %v", got)
 	}
 }
@@ -107,7 +114,14 @@ func TestModerationToolsForMemberIncludesAllToolsForAdministrator(t *testing.T) 
 	}
 
 	tools := ModerationToolsForMember(session, guildID, member)
-	if got, want := toolNames(tools), []string{"ban", "unban", "kick", "timeout", "untimeout", "purge", "member_info"}; !equalStrings(got, want) {
+	want := []string{
+		"ban", "unban", "kick", "warn", "warnings", "clear_warnings", "timeout", "untimeout", "purge",
+		"send_message", "pin_message", "unpin_message", "create_thread", "move_to_voice", "disconnect_voice",
+		"deafen", "undeafen", "slowmode", "lock_channel", "unlock_channel", "set_topic", "rename_channel",
+		"assign_role", "remove_role", "create_role", "delete_role", "role_info", "audit_log",
+		"member_info", "server_info", "channel_info", "role_list", "voice_status",
+	}
+	if got := toolNames(tools); !equalStrings(got, want) {
 		t.Fatalf("expected admin to receive all moderation tools, got %v", got)
 	}
 }
@@ -131,9 +145,13 @@ func TestModerationToolsForMemberExcludesUnbanForBanMembersOnlyMod(t *testing.T)
 			t.Fatalf("expected BanMembers-only moderator to NOT receive unban tool, but it was included")
 		}
 	}
-	// Should get ban and kick but not unban
-	if got, want := toolNames(tools), []string{"ban", "kick", "member_info"}; !equalStrings(got, want) {
-		t.Fatalf("expected BanMembers+KickMembers mod tools [ban kick member_info], got %v", got)
+	// Should get ban, kick, warn, warnings, clear_warnings and public tools
+	want := []string{
+		"ban", "kick", "warn", "warnings", "clear_warnings",
+		"member_info", "server_info", "channel_info", "role_list", "voice_status",
+	}
+	if got := toolNames(tools); !equalStrings(got, want) {
+		t.Fatalf("expected BanMembers+KickMembers mod tools, got %v", got)
 	}
 }
 

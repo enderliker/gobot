@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
-
-	"gobot/internal/ai"
 )
 
 func newTestDatabase(t *testing.T) *Database {
@@ -186,7 +184,7 @@ func TestClearGuildSystemPromptRemovesRow(t *testing.T) {
 func TestSetGuildSystemPromptRejectsOversizedPrompt(t *testing.T) {
 	d := newTestDatabase(t)
 
-	oversized := strings.Repeat("x", ai.MaxGuildSystemPromptChars+1)
+	oversized := strings.Repeat("x", MaxGuildSystemPromptChars+1)
 	if err := d.SetGuildSystemPrompt("guild-1", oversized); err == nil {
 		t.Fatal("expected oversized prompt to fail")
 	}

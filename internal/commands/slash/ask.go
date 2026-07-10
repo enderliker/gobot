@@ -310,9 +310,18 @@ func structuredToolCallFromAskResult(result *ai.AskResult) *ai.ToolCall {
 	return result.ToolCall
 }
 
+func toolRequiresMemberResolution(tool string) bool {
+	switch tool {
+	case "ban", "kick", "timeout", "untimeout", "warn", "clear_warnings",
+		"move_to_voice", "disconnect_voice", "deafen", "undeafen", "assign_role", "remove_role":
+		return true
+	}
+	return false
+}
+
 func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) error {
 	var candidates []ai.MemberCandidate
-	if call.Tool != "purge" {
+	if toolRequiresMemberResolution(call.Tool) {
 		var err error
 		candidates, err = ai.ResolveMembers(s, i.GuildID, call.User)
 		if err != nil {
@@ -343,7 +352,7 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 	}
 
 	var selected *ai.MemberCandidate
-	if call.Tool != "purge" {
+	if toolRequiresMemberResolution(call.Tool) {
 		if len(candidates) == 1 {
 			candidate := candidates[0]
 			selected = &candidate
@@ -472,7 +481,7 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 			return
 		}
 
-		if selected == nil && call.Tool != "purge" {
+		if selected == nil && toolRequiresMemberResolution(call.Tool) {
 			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
@@ -522,7 +531,7 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 
 	var initialEmbed *discordgo.MessageEmbed
 	var initialComponents []discordgo.MessageComponent
-	if selected != nil || call.Tool == "purge" {
+	if selected != nil || !toolRequiresMemberResolution(call.Tool) {
 		initialEmbed = embeds.AIConfirmation(call.Confirmation)
 		initialComponents = confirmationComponents(confirmID, cancelID)
 	} else {
@@ -876,11 +885,9 @@ func sanitizeChoiceText(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// handleDirectReadTool runs and responds immediately to read-only, non-destructive
-// tools (like member_info) without requiring moderator confirmation buttons.
 func handleDirectReadTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
 	if call.Tool != "member_info" {
-		return false
+		return handleReadTool(s, i, call)
 	}
 
 	candidates, err := ai.ResolveMembers(s, i.GuildID, call.User)

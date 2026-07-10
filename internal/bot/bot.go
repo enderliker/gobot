@@ -47,7 +47,7 @@ func New(token string) (*Bot, error) {
 		return nil, err
 	}
 
-	s.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent
+	s.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent | discordgo.IntentsGuildVoiceStates | discordgo.IntentsGuildMembers
 	s.AddHandler(handleInteraction)
 	s.AddHandler(handleMessageCreate)
 	s.AddHandler(func(s *discordgo.Session, _ *discordgo.GuildCreate) {

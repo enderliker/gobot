@@ -13,12 +13,12 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"gobot/internal/ai"
-
 	"github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 )
+
+const MaxGuildSystemPromptChars = 4000
 
 type GuildConfig struct {
 	GuildID  string
@@ -97,6 +97,7 @@ func (d *Database) migrate() error {
 	var q string
 	var alter string
 	var promptTable string
+	var warningsTable string
 	if d.driver == "mysql" {
 		q = `CREATE TABLE IF NOT EXISTS guild_config (
 			guild_id   VARCHAR(20)  PRIMARY KEY,
@@ -110,6 +111,36 @@ func (d *Database) migrate() error {
 			guild_id             VARCHAR(20)  PRIMARY KEY,
 			guild_system_prompt  TEXT         NOT NULL,
 			updated_at           TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+		)`
+		warningsTable = `CREATE TABLE IF NOT EXISTS member_warnings (
+			id         INT AUTO_INCREMENT PRIMARY KEY,
+			guild_id   VARCHAR(20) NOT NULL,
+			user_id    VARCHAR(20) NOT NULL,
+			reason     TEXT NOT NULL,
+			actor_id   VARCHAR(20) NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`
+	} else if d.driver == "postgres" {
+		q = `CREATE TABLE IF NOT EXISTS guild_config (
+			guild_id   TEXT PRIMARY KEY,
+			api_key    TEXT NOT NULL,
+			provider   TEXT NOT NULL,
+			model      TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`
+		alter = `ALTER TABLE guild_config ADD COLUMN model TEXT NOT NULL DEFAULT ''`
+		promptTable = `CREATE TABLE IF NOT EXISTS guild_prompt_config (
+			guild_id            TEXT PRIMARY KEY,
+			guild_system_prompt TEXT NOT NULL,
+			updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`
+		warningsTable = `CREATE TABLE IF NOT EXISTS member_warnings (
+			id         SERIAL PRIMARY KEY,
+			guild_id   TEXT NOT NULL,
+			user_id    TEXT NOT NULL,
+			reason     TEXT NOT NULL,
+			actor_id   TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`
 	} else {
 		q = `CREATE TABLE IF NOT EXISTS guild_config (
@@ -125,12 +156,23 @@ func (d *Database) migrate() error {
 			guild_system_prompt TEXT NOT NULL,
 			updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`
+		warningsTable = `CREATE TABLE IF NOT EXISTS member_warnings (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			guild_id   TEXT NOT NULL,
+			user_id    TEXT NOT NULL,
+			reason     TEXT NOT NULL,
+			actor_id   TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`
 	}
 	if _, err := d.db.Exec(q); err != nil {
 		return err
 	}
 	_, _ = d.db.Exec(alter)
 	if _, err := d.db.Exec(promptTable); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec(warningsTable); err != nil {
 		return err
 	}
 	return nil
@@ -320,11 +362,11 @@ func parseAPIKeyEncryptionKey(raw string) ([]byte, error) {
 }
 
 func validateGuildSystemPromptSize(prompt string) error {
-	if utf8.RuneCountInString(prompt) <= ai.MaxGuildSystemPromptChars {
+	if utf8.RuneCountInString(prompt) <= MaxGuildSystemPromptChars {
 		return nil
 	}
 
-	return fmt.Errorf("guild system prompt exceeds %d characters", ai.MaxGuildSystemPromptChars)
+	return fmt.Errorf("guild system prompt exceeds %d characters", MaxGuildSystemPromptChars)
 }
 
 func (d *Database) encryptAPIKey(apiKey string) (string, error) {
@@ -429,4 +471,60 @@ func (d *Database) migratePlaintextAPIKeys() error {
 	}
 
 	return tx.Commit()
+}
+
+type Warning struct {
+	ID        int
+	GuildID   string
+	UserID    string
+	Reason    string
+	ActorID   string
+	CreatedAt string
+}
+
+func (d *Database) AddWarning(guildID, userID, actorID, reason string) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	q := d.format("INSERT INTO member_warnings (guild_id, user_id, actor_id, reason) VALUES (?, ?, ?, ?)")
+	_, err := d.db.Exec(q, guildID, userID, actorID, reason)
+	return err
+}
+
+func (d *Database) ClearWarnings(guildID, userID string) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	q := d.format("DELETE FROM member_warnings WHERE guild_id = ? AND user_id = ?")
+	_, err := d.db.Exec(q, guildID, userID)
+	return err
+}
+
+func (d *Database) GetWarnings(guildID, userID string) ([]Warning, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	q := d.format("SELECT id, guild_id, user_id, actor_id, reason, created_at FROM member_warnings WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC")
+	rows, err := d.db.Query(q, guildID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var warnings []Warning
+	for rows.Next() {
+		var w Warning
+		if err := rows.Scan(&w.ID, &w.GuildID, &w.UserID, &w.ActorID, &w.Reason, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		warnings = append(warnings, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return warnings, nil
 }
