@@ -84,3 +84,32 @@ func TestIsUserFacingError(t *testing.T) {
 		}
 	}
 }
+
+func TestUserFacingErrorQuota(t *testing.T) {
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{
+			errors.New("gemini (429 RESOURCE_EXHAUSTED): quota exceeded, limit: 20 * Please retry in 7.093550827s."),
+			"The provider quota or rate limit has been reached (Limit: 20). Please retry in 7.093550827s.",
+		},
+		{
+			errors.New("gemini (429 RESOURCE_EXHAUSTED): limit: 15 (metric: requests)"),
+			"The provider quota or rate limit has been reached (Limit: 15). Please try again later.",
+		},
+		{
+			errors.New("rate limited. Please retry in 10s"),
+			"The provider rate limit has been reached. Please retry in 10s.",
+		},
+		{
+			errors.New("generic quota error"),
+			"The provider quota or rate limit has been reached. Please try again later.",
+		},
+	}
+	for _, tt := range tests {
+		if got := UserFacingError(tt.err); got != tt.want {
+			t.Errorf("UserFacingError(%v) = %q; want %q", tt.err, got, tt.want)
+		}
+	}
+}

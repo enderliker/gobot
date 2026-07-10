@@ -58,7 +58,15 @@ func UserFacingError(err error) string {
 		return "The AI provider blocked the request through its security protection layer."
 	case strings.Contains(msg, "error 1015"):
 		return "The AI provider is temporarily rate limiting requests. Please try again in a few minutes."
-	case strings.Contains(msg, "429"), strings.Contains(msg, "quota"), strings.Contains(msg, "rate limit"):
+	case strings.Contains(msg, "429"), strings.Contains(msg, "quota"), strings.Contains(msg, "rate limit"), strings.Contains(msg, "resource_exhausted"):
+		limit, retry := extractQuotaAndRetry(err.Error())
+		if limit != "" && retry != "" {
+			return "The provider quota or rate limit has been reached (Limit: " + limit + "). Please retry in " + retry + "."
+		} else if limit != "" {
+			return "The provider quota or rate limit has been reached (Limit: " + limit + "). Please try again later."
+		} else if retry != "" {
+			return "The provider rate limit has been reached. Please retry in " + retry + "."
+		}
 		return "The provider quota or rate limit has been reached. Please try again later."
 	case strings.Contains(msg, "<html"), strings.Contains(msg, "cloudflare"), strings.Contains(msg, "attention required"):
 		return "The AI provider returned a protection or verification page instead of a normal response."
@@ -127,4 +135,20 @@ func sanitizeErrorMessage(msg string, secrets ...string) (string, bool) {
 func IsImageModel(model string) bool {
 	m := strings.ToLower(model)
 	return strings.Contains(m, "imagen-") || strings.Contains(m, "dall-e") || strings.HasSuffix(m, "-image")
+}
+
+func extractQuotaAndRetry(msg string) (limit string, retry string) {
+	limitRegex := regexp.MustCompile(`(?i)\blimit\s*:\s*([0-9a-zA-Z._-]+)`)
+	if match := limitRegex.FindStringSubmatch(msg); len(match) > 1 {
+		limit = strings.TrimSuffix(match[1], ".")
+	}
+	retryRegex := regexp.MustCompile(`(?i)retry\s+in\s+([0-9a-zA-Z0-9._-]+)|retrydelay:?\s*([0-9a-zA-Z0-9._-]+)`)
+	if match := retryRegex.FindStringSubmatch(msg); len(match) > 1 {
+		if match[1] != "" {
+			retry = strings.TrimSuffix(match[1], ".")
+		} else {
+			retry = strings.TrimSuffix(match[2], ".")
+		}
+	}
+	return
 }

@@ -12,18 +12,59 @@ import (
 	"strings"
 )
 
+type geminiErrorDetails struct {
+	Type       string `json:"@type"`
+	RetryDelay string `json:"retryDelay"`
+	Violations []struct {
+		QuotaMetric string `json:"quotaMetric"`
+		QuotaLimit  any    `json:"limit"`
+		QuotaLimit2 any    `json:"quotaLimit"`
+		Description string `json:"description"`
+	} `json:"violations"`
+}
+
+type geminiErrorResponse struct {
+	Error struct {
+		Message string `json:"message"`
+		Status  string `json:"status"`
+		Code    int    `json:"code"`
+		Details []geminiErrorDetails `json:"details"`
+	} `json:"error"`
+}
+
 // parseGeminiError extracts the human-readable message from a Gemini API error
 // response body. Falls back to the raw body if parsing fails.
 func parseGeminiError(status int, body []byte) error {
-	var apiErr struct {
-		Error struct {
-			Message string `json:"message"`
-			Status  string `json:"status"`
-			Code    int    `json:"code"`
-		} `json:"error"`
-	}
+	var apiErr geminiErrorResponse
 	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Error.Message != "" {
-		return fmt.Errorf("gemini (%d %s): %s", status, apiErr.Error.Status, apiErr.Error.Message)
+		msg := apiErr.Error.Message
+		var extra []string
+		for _, d := range apiErr.Error.Details {
+			if d.RetryDelay != "" {
+				extra = append(extra, fmt.Sprintf("Please retry in %s.", d.RetryDelay))
+			}
+			for _, v := range d.Violations {
+				limitVal := ""
+				if v.QuotaLimit != nil {
+					limitVal = fmt.Sprintf("%v", v.QuotaLimit)
+				} else if v.QuotaLimit2 != nil {
+					limitVal = fmt.Sprintf("%v", v.QuotaLimit2)
+				}
+				if limitVal != "" {
+					metric := v.QuotaMetric
+					if metric == "" {
+						metric = "requests"
+					}
+					extra = append(extra, fmt.Sprintf("limit: %s (metric: %s)", limitVal, metric))
+				} else if v.Description != "" {
+					extra = append(extra, v.Description)
+				}
+			}
+		}
+		if len(extra) > 0 {
+			msg = msg + " * " + strings.Join(extra, " * ")
+		}
+		return fmt.Errorf("gemini (%d %s): %s", status, apiErr.Error.Status, msg)
 	}
 	return fmt.Errorf("gemini: status %d: %s", status, body)
 }
