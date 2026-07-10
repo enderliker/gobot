@@ -56,78 +56,21 @@ func (g *Gemini) Validate(ctx context.Context, apiKey string) error {
 }
 
 func (g *Gemini) ListModels(ctx context.Context, apiKey string) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildGeminiModelsURL(apiKey), nil)
-	if err != nil {
-		return nil, sanitizeProviderError(err, apiKey)
-	}
+	return []string{
+		"gemini-3.5-flash",          // texto/chat, generación más nueva
+		"gemini-3.1-flash-lite",     // texto/chat, liviano
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, sanitizeProviderError(err, apiKey)
-	}
-	defer resp.Body.Close()
+		"gemini-2.5-pro",            // texto/chat (deprecated, apaga 16 oct 2026)
+		"gemini-2.5-flash",          // texto/chat (deprecated, apaga 16 oct 2026)
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, sanitizeProviderError(parseGeminiError(resp.StatusCode, body), apiKey)
-	}
+		"gemini-3-pro-image",         // imagen — Nano Banana Pro
+		"gemini-3.1-flash-image",     // imagen — Nano Banana 2
+		"gemini-3.1-flash-lite-image",// imagen — Nano Banana 2 Lite
+		"gemini-2.5-flash-image",     // imagen — Nano Banana (original)
 
-	var data struct {
-		Models []struct {
-			Name                       string   `json:"name"`
-			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
-			InputTokenLimit            int      `json:"inputTokenLimit"`
-			OutputTokenLimit           int      `json:"outputTokenLimit"`
-		} `json:"models"`
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, fmt.Errorf("failed to parse models response: %w", err)
-	}
-
-	var models []string
-	for _, m := range data.Models {
-		nameLower := strings.ToLower(m.Name)
-		// Only allow gemini and imagen models
-		if !strings.Contains(nameLower, "gemini") && !strings.Contains(nameLower, "imagen") {
-			continue
-		}
-		// Ensure they have valid quota/token limit
-		if m.InputTokenLimit <= 0 && m.OutputTokenLimit <= 0 {
-			continue
-		}
-
-		supportsGenerate := false
-		for _, method := range m.SupportedGenerationMethods {
-			if method == "generateContent" || method == "predict" {
-				supportsGenerate = true
-				break
-			}
-		}
-		if !supportsGenerate {
-			continue
-		}
-		name := strings.TrimPrefix(m.Name, "models/")
-		models = append(models, name)
-	}
-
-	if len(models) == 0 {
-		return []string{
-			"gemini-3.5-pro",
-			"gemini-3.5-flash",
-			"gemini-3.1-pro",
-			"gemini-3.1-flash-lite",
-			"gemini-2.5-pro",
-			"gemini-2.5-flash",
-		}, nil
-	}
-
-	return models, nil
+		// "gemini-3.5-flash-image" NO EXISTE (404) — la familia 3.5 todavía
+		// no tiene variante de imagen propia. No la agregues.
+	}, nil
 }
 
 func (g *Gemini) Ask(ctx context.Context, apiKey, model string, prompt PromptEnvelope, tools []ToolDefinition) (*AskResult, error) {

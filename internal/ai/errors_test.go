@@ -58,6 +58,9 @@ func TestIsImageModel(t *testing.T) {
 		{"imagen-3.0-generate-002", true},
 		{"dall-e-3", true},
 		{"gpt-4o", false},
+		{"gemini-3.1-flash-image", true},
+		{"gemini-3-pro-image", true},
+		{"gemini-2.5-flash-image", true},
 	}
 	for _, tt := range tests {
 		if got := IsImageModel(tt.model); got != tt.want {

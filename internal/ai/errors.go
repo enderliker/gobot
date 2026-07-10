@@ -126,5 +126,5 @@ func sanitizeErrorMessage(msg string, secrets ...string) (string, bool) {
 
 func IsImageModel(model string) bool {
 	m := strings.ToLower(model)
-	return strings.Contains(m, "imagen-") || strings.Contains(m, "dall-e")
+	return strings.Contains(m, "imagen-") || strings.Contains(m, "dall-e") || strings.HasSuffix(m, "-image")
 }
