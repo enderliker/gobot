@@ -5,7 +5,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	webassets "gobot/web"
 )
+
+func init() {
+	TemplatesFS = webassets.TemplatesFS
+	StaticFS = webassets.StaticFS
+}
 
 func TestHealthzHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -98,5 +105,33 @@ func TestSecurityHeadersArePresent(t *testing.T) {
 	}
 	if got := w.Header().Get("Content-Security-Policy"); got == "" {
 		t.Fatal("expected Content-Security-Policy header to be set")
+	}
+}
+
+func TestHomeHandler(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+
+	router := NewRouter()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestStaticFilesHandler(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/static/css/tokens.css", nil)
+	w := httptest.NewRecorder()
+
+	router := NewRouter()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	if cacheControl := w.Header().Get("Cache-Control"); cacheControl == "" {
+		t.Fatal("expected Cache-Control header to be set for static assets")
 	}
 }

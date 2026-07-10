@@ -4,8 +4,8 @@ import (
 	"embed"
 	"html/template"
 	"io"
+	"log"
 	"net/http"
-	"path/filepath"
 )
 
 // TemplatesFS is seeded from main.go with the embedded templates directory
@@ -16,12 +16,13 @@ func RenderTemplate(w io.Writer, page string, data any) error {
 	// In production, templates are read from embedded FS
 	tmpl, err := template.New("layout.html").ParseFS(
 		TemplatesFS,
-		"web/templates/layout.html",
-		"web/templates/partials/header.html",
-		"web/templates/partials/footer.html",
-		filepath.Join("web/templates/pages", page),
+		"templates/layout.html",
+		"templates/partials/header.html",
+		"templates/partials/footer.html",
+		"templates/pages/"+page,
 	)
 	if err != nil {
+		log.Printf("[WEB] Template compilation error: %v", err)
 		return err
 	}
 

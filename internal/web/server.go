@@ -52,7 +52,7 @@ func NewRouter() http.Handler {
 	r.Use(SecurityHeadersMiddleware)
 
 	// Sub-FS for static assets
-	subFS, err := fs.Sub(StaticFS, "web/static")
+	subFS, err := fs.Sub(StaticFS, "static")
 	if err != nil {
 		log.Fatalf("[WEB] Failed to read static FS: %v", err)
 	}
