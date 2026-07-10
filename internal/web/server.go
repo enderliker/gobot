@@ -82,10 +82,11 @@ func NewRouter() http.Handler {
 
 func StartServer(port string) {
 	// Determine interface binding
-	addr := "127.0.0.1:" + port
-	if os.Getenv("ENV") == "development" {
-		addr = "0.0.0.0:" + port
+	bind := os.Getenv("WEB_BIND")
+	if bind == "" {
+		bind = "0.0.0.0"
 	}
+	addr := bind + ":" + port
 
 	srv := &http.Server{
 		Addr:         addr,

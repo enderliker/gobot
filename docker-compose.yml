@@ -44,6 +44,7 @@ services:
       - WEB_DISCORD_INVITE_URL=${WEB_DISCORD_INVITE_URL}
       - DB_DRIVER=${DB_DRIVER}
       - DB_DSN=${DB_DSN}
+      - API_KEY_ENCRYPTION_KEY=${API_KEY_ENCRYPTION_KEY}
       - ENV=production
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
