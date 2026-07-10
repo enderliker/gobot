@@ -1,0 +1,59 @@
+{{define "content"}}
+<section class="commands-detail-section">
+    <div class="container">
+        <div class="section-badge">COMMAND REFERENCE</div>
+        <h1 class="section-title text-left">Slash Commands Specification</h1>
+        <p class="section-intro">Detailed interface reference for all interaction endpoints exposed by gobot on Discord.</p>
+
+        <div class="commands-grid">
+            <div class="command-card">
+                <div class="command-card-header">
+                    <span class="cmd-name">/ask</span>
+                    <span class="cmd-perm">ALL MEMBERS</span>
+                </div>
+                <p class="cmd-desc">Queries the configured AI provider and returns a synthesized response. If the AI determines moderation action is warranted, it initiates the confirmation flow.</p>
+                <div class="discord-preview">
+                    <div class="discord-message">
+                        <div class="discord-avatar user-avatar">U</div>
+                        <div class="discord-content">
+                            <span class="discord-author">User</span>
+                            <div class="discord-text"><span class="highlight-command">/ask</span> question: "What is the latest score for the match?"</div>
+                        </div>
+                    </div>
+                    <div class="discord-message">
+                        <div class="discord-avatar bot-avatar">AI</div>
+                        <div class="discord-content">
+                            <span class="discord-author bot-badge">gobot <span class="badge-tag">BOT</span></span>
+                            <div class="discord-text">The match ended in a 1 - 1 draw, with the equalizer scored in the 88th minute.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="command-card">
+                <div class="command-card-header">
+                    <span class="cmd-name">/setkey</span>
+                    <span class="cmd-perm">SERVER OWNER ONLY</span>
+                </div>
+                <p class="cmd-desc">Sets or updates the server-wide AI provider and registers the API key. Triggers an automated validation query to ensure connection integrity and lists available models.</p>
+            </div>
+
+            <div class="command-card">
+                <div class="command-card-header">
+                    <span class="cmd-name">/config</span>
+                    <span class="cmd-perm">SERVER OWNER ONLY</span>
+                </div>
+                <p class="cmd-desc">Configures server settings. Currently supports toggling <code>multi_message</code> mode (on/off) to split long AI responses across multiple sequential messages.</p>
+            </div>
+
+            <div class="command-card">
+                <div class="command-card-header">
+                    <span class="cmd-name">/ping</span>
+                    <span class="cmd-perm">ALL MEMBERS</span>
+                </div>
+                <p class="cmd-desc">Measures and outputs the bot's current API latency and Discord gateway heartbeat delay.</p>
+            </div>
+        </div>
+    </div>
+</section>
+{{end}}

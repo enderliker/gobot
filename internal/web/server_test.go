@@ -54,24 +54,6 @@ func TestInviteHandlerRedirects(t *testing.T) {
 	}
 }
 
-func TestDocsHandlerRedirects(t *testing.T) {
-	t.Setenv("WEB_REPO_URL", "https://github.com/test-repo")
-
-	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
-	w := httptest.NewRecorder()
-
-	router := NewRouter()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusFound {
-		t.Fatalf("expected 302 redirect, got %d", w.Code)
-	}
-
-	location := w.Header().Get("Location")
-	if location != "https://github.com/test-repo" {
-		t.Fatalf("expected redirect to https://github.com/test-repo, got %q", location)
-	}
-}
 
 func TestStatsAPIDegradesTo503WithoutDB(t *testing.T) {
 	// Database.Default is nil in test environment if not initialized
@@ -117,6 +99,23 @@ func TestHomeHandler(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSubpagesHandlers(t *testing.T) {
+	paths := []string{"/features", "/how-it-works", "/commands", "/docs"}
+	router := NewRouter()
+
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200 for %s, got %d", path, w.Code)
+			}
+		})
 	}
 }
 

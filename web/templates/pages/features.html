@@ -1,0 +1,59 @@
+{{define "content"}}
+<section class="features-detail-section">
+    <div class="container">
+        <div class="section-badge">PRODUCT CAPABILITIES</div>
+        <h1 class="section-title text-left">Enterprise-Grade Control & Integration</h1>
+        <p class="section-intro">Explore the foundational architecture and security boundaries built into gobot to ensure reliable and policy-compliant AI operations inside your Discord organization.</p>
+        
+        <div class="features-detail-grid">
+            <div class="feature-detail-card">
+                <div class="feature-detail-icon">🛡️</div>
+                <h3>Human-in-the-Loop Moderation</h3>
+                <p>The definitive safety feature of gobot. Destructive or administrative actions proposed by the AI—such as member bans, kicks, or timeouts—are routed to interactive confirmation dialogs. No execution occurs without a verified administrator confirming the payload.</p>
+            </div>
+
+            <div class="feature-detail-card">
+                <div class="feature-detail-icon">🔑</div>
+                <h3>AES-256-GCM Secure Storage</h3>
+                <p>Server credentials and API keys are never stored in plaintext or exposed to unauthorized parties. The database layer utilizes standard AES-256-GCM authenticated encryption, keeping your keys private at rest.</p>
+            </div>
+
+            <div class="feature-detail-card">
+                <div class="feature-detail-icon">🔌</div>
+                <h3>Decoupled Multi-Provider AI Engine</h3>
+                <p>Switch between the industry's leading language model providers instantly. Support for Gemini, OpenAI, Anthropic, and Mistral is built directly into the engine, allowing you to configure different providers and specific models for individual servers.</p>
+            </div>
+
+            <div class="feature-detail-card">
+                <div class="feature-detail-icon">🔍</div>
+                <h3>Contextual Web Search Synthesis</h3>
+                <p>Equip the assistant with real-time web capabilities. Through our Tavily search integration, the bot performs live queries to retrieve current information, synthesizing the results into a natural, cohesive response without dumping raw lists of links.</p>
+            </div>
+
+            <div class="feature-detail-card">
+                <div class="feature-detail-icon">⚡</div>
+                <h3>Discord API Rate Limit Protection</h3>
+                <p>A custom HTTP transport intercepts Cloudflare and Discord rate limit headers dynamically. Write requests are managed with minimum intervals to guarantee high performance under load without triggering service blocks.</p>
+            </div>
+
+            <div class="feature-detail-card">
+                <div class="feature-detail-icon">📁</div>
+                <h3>Flexible Database Drivers</h3>
+                <p>Fully compatible with SQLite, PostgreSQL, and MySQL databases. Schema migrations run automatically upon process startup to ensure database consistency across environments.</p>
+            </div>
+
+            <div class="feature-detail-card">
+                <div class="feature-detail-icon">✉️</div>
+                <h3>Configurable Multi-Message Outputs</h3>
+                <p>Manage large responses without losing critical context. Administrators can enable multi-message mode using <code>/config</code>, prompting the bot to segment and deliver responses exceeding Discord's 2000-character limit across sequential follow-ups.</p>
+            </div>
+
+            <div class="feature-detail-card">
+                <div class="feature-detail-icon">🔒</div>
+                <h3>Security-First Prompt Sandboxing</h3>
+                <p>Strict system prompt instructions and inputs sanitization shield the underlying prompt architecture from potential injection attacks and instruction leaks, maintaining the security boundary of the model.</p>
+            </div>
+        </div>
+    </div>
+</section>
+{{end}}

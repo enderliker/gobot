@@ -1,0 +1,51 @@
+{{define "content"}}
+<section class="docs-section">
+    <div class="container docs-container">
+        <div class="docs-nav">
+            <h3>Documentation</h3>
+            <ul>
+                <li><a href="#quickstart" class="active">Getting Started</a></li>
+                <li><a href="#provider-config">Provider Configuration</a></li>
+                <li><a href="#settings">Settings Reference</a></li>
+                <li><a href="#troubleshooting">Troubleshooting</a></li>
+            </ul>
+        </div>
+        <div class="docs-content">
+            <div id="quickstart" class="docs-block">
+                <h2>Getting Started</h2>
+                <p>Once gobot is invited to your Discord server, you must onboard it by configuring an AI provider. Without this initial setup, the <code>/ask</code> command will remain offline.</p>
+                <p>Note: Administrative configurations like <code>/setkey</code> and <code>/config</code> can only be executed by the verified <strong>Server Owner</strong> due to strict security profiles.</p>
+            </div>
+
+            <div id="provider-config" class="docs-block">
+                <h2>Provider Configuration</h2>
+                <p>Use the <code>/setkey</code> command to bind your API credentials to the server. The onboarding flow requires two parameters:</p>
+                <ul>
+                    <li><strong>provider</strong>: Select Gemini, OpenAI, Anthropic, or Mistral.</li>
+                    <li><strong>key</strong>: Paste your provider API key.</li>
+                </ul>
+                <p>Upon submission, gobot will query the provider's endpoint to confirm the key's validity and discover the active models associated with your account. You will then be prompted to select a default model from an interactive menu.</p>
+            </div>
+
+            <div id="settings" class="docs-block">
+                <h2>Settings Reference</h2>
+                <p>Configure bot preferences using the <code>/config</code> command. The primary configuration parameter is:</p>
+                <h3><code>multi_message</code></h3>
+                <ul>
+                    <li><strong>Value: <code>off</code> (Default)</strong>: Responses from the AI that exceed Discord's 2000-character limit are clipped to fit within a single message. The bot instructs the AI to write concise summaries to avoid overflow.</li>
+                    <li><strong>Value: <code>on</code></strong>: Responses that exceed the 2000-character limit are automatically segmented and delivered as consecutive follow-up messages, preserving the full context.</li>
+                </ul>
+            </div>
+
+            <div id="troubleshooting" class="docs-block">
+                <h2>Troubleshooting FAQ</h2>
+                <h4>Why am I getting "Access Denied" errors?</h4>
+                <p>Certain commands are strictly scoped to the Server Owner. Standard administrators or users with elevated roles (like Administrator or Manage Server) cannot run <code>/setkey</code> or <code>/config</code>.</p>
+                
+                <h4>What happens if my API key quota runs out?</h4>
+                <p>gobot will handle the quota error gracefully, logging a warning internally and returning a user-friendly error response. The bot never leaks raw API traces or credential variables during error responses.</p>
+            </div>
+        </div>
+    </div>
+</section>
+{{end}}

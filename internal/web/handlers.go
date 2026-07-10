@@ -14,20 +14,47 @@ type StatsResponse struct {
 	Servers int `json:"servers"`
 }
 
-// HomeHandler serves the landing page
+// HomeHandler serves the short landing entrance page
 func HomeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		NotFoundHandler(w, r)
 		return
 	}
 
-	// Pass any page config needed (such as environment info)
-	data := map[string]any{
-		"RepoURL": os.Getenv("WEB_REPO_URL"),
-	}
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := RenderTemplate(w, "home.html", data); err != nil {
+	if err := RenderTemplate(w, "home.html", nil); err != nil {
+		InternalError(w)
+	}
+}
+
+// FeaturesHandler serves the detailed capabilities page
+func FeaturesHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := RenderTemplate(w, "features.html", nil); err != nil {
+		InternalError(w)
+	}
+}
+
+// HowItWorksHandler serves the architecture flow steps page
+func HowItWorksHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := RenderTemplate(w, "how-it-works.html", nil); err != nil {
+		InternalError(w)
+	}
+}
+
+// CommandsHandler serves the slash commands reference list
+func CommandsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := RenderTemplate(w, "commands.html", nil); err != nil {
+		InternalError(w)
+	}
+}
+
+// DocsHandler serves the server admin documentation guide
+func DocsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := RenderTemplate(w, "docs.html", nil); err != nil {
 		InternalError(w)
 	}
 }
@@ -40,15 +67,6 @@ func InviteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, inviteURL, http.StatusFound)
-}
-
-// DocsHandler redirects to the repository README/Documentation
-func DocsHandler(w http.ResponseWriter, r *http.Request) {
-	repoURL := os.Getenv("WEB_REPO_URL")
-	if repoURL == "" {
-		repoURL = "https://github.com/enderliker/gobot"
-	}
-	http.Redirect(w, r, repoURL, http.StatusFound)
 }
 
 // HealthzHandler is used for Docker container healthchecks
@@ -64,7 +82,6 @@ func StatsAPIHandler(w http.ResponseWriter, r *http.Request) {
 
 	servers := GetLiveStats()
 	if servers == 0 {
-		// If DB is offline/fails and stats returns 0, degrade gracefully
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}

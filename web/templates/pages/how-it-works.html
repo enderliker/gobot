@@ -1,0 +1,43 @@
+{{define "content"}}
+<section class="how-it-works-detail-section">
+    <div class="container">
+        <div class="section-badge">ARCHITECTURE FLOW</div>
+        <h1 class="section-title text-left">How gobot Operates</h1>
+        <p class="section-intro">Understand the sequence of events from configuration to execution that keeps your server automated yet strictly supervised.</p>
+
+        <div class="timeline-container">
+            <div class="timeline-item">
+                <div class="timeline-number">01</div>
+                <div class="timeline-content">
+                    <h3>Secure Credential Onboarding</h3>
+                    <p>The server administrator invokes <code>/setkey</code> to supply their API key and configure the preferred provider. The key is validated against the provider API in real-time, encrypted with AES-256-GCM, and safely stored in the database.</p>
+                </div>
+            </div>
+
+            <div class="timeline-item">
+                <div class="timeline-number">02</div>
+                <div class="timeline-content">
+                    <h3>Contextual User Queries</h3>
+                    <p>Members query the model using the <code>/ask</code> command. The query is bundled inside a prompt envelope that injects local context, system policies, and administrative permission boundaries before hitting the provider API.</p>
+                </div>
+            </div>
+
+            <div class="timeline-item">
+                <div class="timeline-number">03</div>
+                <div class="timeline-content">
+                    <h3>Enforcing the Safety Boundary</h3>
+                    <p>If the AI response requires an administrative action (e.g. banning or muting a user), the execution halts. gobot presents an interactive verification card to the administrators. The action is held in queue and only executed when a human confirms the payload.</p>
+                </div>
+            </div>
+
+            <div class="timeline-item">
+                <div class="timeline-number">04</div>
+                <div class="timeline-content">
+                    <h3>Web Query Resolution</h3>
+                    <p>When the query relies on real-time data, the AI invokes the integrated search tool. gobot queries the Tavily API, retrieves current web summaries, and sends them back to the AI for final natural language synthesis.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{{end}}

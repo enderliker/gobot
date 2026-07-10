@@ -42,7 +42,6 @@ services:
     environment:
       - WEB_PORT=8081
       - WEB_DISCORD_INVITE_URL=${WEB_DISCORD_INVITE_URL}
-      - WEB_REPO_URL=${WEB_REPO_URL}
       - DB_DRIVER=${DB_DRIVER}
       - DB_DSN=${DB_DSN}
       - ENV=production

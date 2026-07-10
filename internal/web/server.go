@@ -66,8 +66,11 @@ func NewRouter() http.Handler {
 
 	// Web Routes
 	r.Get("/", HomeHandler)
-	r.Get("/invite", InviteHandler)
+	r.Get("/features", FeaturesHandler)
+	r.Get("/how-it-works", HowItWorksHandler)
+	r.Get("/commands", CommandsHandler)
 	r.Get("/docs", DocsHandler)
+	r.Get("/invite", InviteHandler)
 	r.Get("/healthz", HealthzHandler)
 	r.Get("/api/stats", StatsAPIHandler)
 

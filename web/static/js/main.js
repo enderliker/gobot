@@ -39,7 +39,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (btnDemoConfirm) {
             btnDemoConfirm.addEventListener("click", () => {
                 btnDemoConfirm.disabled = true;
-                btnDemoConfirm.textContent = "Ejecutando...";
+                btnDemoConfirm.textContent = "Executing...";
                 
                 setTimeout(() => {
                     msgBotConfirmation.classList.add("hidden");
@@ -93,7 +93,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }, observerOptions);
 
         // Apply reveals
-        document.querySelectorAll(".flow-step, .feature-card, .command-item").forEach(el => {
+        document.querySelectorAll(".flow-step, .feature-card, .command-item, .timeline-item, .feature-detail-card, .command-card").forEach(el => {
             el.classList.add("reveal-on-scroll");
             revealObserver.observe(el);
         });
