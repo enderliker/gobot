@@ -55,17 +55,66 @@ func (g *Gemini) Validate(ctx context.Context, apiKey string) error {
 }
 
 func (g *Gemini) ListModels(ctx context.Context, apiKey string) ([]string, error) {
-	return []string{
-		"gemini-3.5-pro",
-		"gemini-3.5-flash",
-		"gemini-3.1-pro",
-		"gemini-3.1-flash-lite",
-		"gemini-2.5-pro",
-		"gemini-2.5-flash",
-		"gemma-4",
-		"gemma-2-27b-it",
-		"gemma-2-9b-it",
-	}, nil
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildGeminiModelsURL(apiKey), nil)
+	if err != nil {
+		return nil, sanitizeProviderError(err, apiKey)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, sanitizeProviderError(err, apiKey)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, sanitizeProviderError(parseGeminiError(resp.StatusCode, body), apiKey)
+	}
+
+	var data struct {
+		Models []struct {
+			Name                       string   `json:"name"`
+			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+		} `json:"models"`
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse models response: %w", err)
+	}
+
+	var models []string
+	for _, m := range data.Models {
+		supportsGenerate := false
+		for _, method := range m.SupportedGenerationMethods {
+			if method == "generateContent" {
+				supportsGenerate = true
+				break
+			}
+		}
+		if !supportsGenerate {
+			continue
+		}
+		name := strings.TrimPrefix(m.Name, "models/")
+		models = append(models, name)
+	}
+
+	if len(models) == 0 {
+		return []string{
+			"gemini-3.5-pro",
+			"gemini-3.5-flash",
+			"gemini-3.1-pro",
+			"gemini-3.1-flash-lite",
+			"gemini-2.5-pro",
+			"gemini-2.5-flash",
+		}, nil
+	}
+
+	return models, nil
 }
 
 func (g *Gemini) Ask(ctx context.Context, apiKey, model string, prompt PromptEnvelope, tools []ToolDefinition) (*AskResult, error) {

@@ -16,6 +16,22 @@ var (
 	inlineSecretPattern         = regexp.MustCompile(`(?i)((?:x-)?api[_-]?key(?:=|:)\s*)[^\s,;]+`)
 )
 
+func IsUserFacingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "401"), strings.Contains(msg, "unauthorized"), strings.Contains(msg, "invalid api key"):
+		return true
+	case strings.Contains(msg, "403"):
+		return true
+	case strings.Contains(msg, "429"), strings.Contains(msg, "quota"), strings.Contains(msg, "rate limit"), strings.Contains(msg, "resource_exhausted"):
+		return true
+	}
+	return false
+}
+
 func UserFacingError(err error) string {
 	if err == nil {
 		return "Unknown error"

@@ -113,7 +113,9 @@ func init() {
 					if ctx.Err() != nil || lifecycle.IsShuttingDown() {
 						return
 					}
-					log.Printf("[ASK] provider %s: %v", cfg.Provider, err)
+					if !ai.IsUserFacingError(err) {
+						log.Printf("[ASK] provider %s: %v", cfg.Provider, err)
+					}
 					embed = embeds.Error("AI Error", ai.UserFacingError(err))
 					if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
 						Embeds:          &[]*discordgo.MessageEmbed{embed},
