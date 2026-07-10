@@ -310,12 +310,16 @@ func structuredToolCallFromAskResult(result *ai.AskResult) *ai.ToolCall {
 }
 
 func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) error {
-	candidates, err := ai.ResolveMembers(s, i.GuildID, call.User)
-	if err != nil {
-		return err
-	}
-	if len(candidates) == 0 {
-		return fmt.Errorf("no members matched %q", call.User)
+	var candidates []ai.MemberCandidate
+	if call.Tool != "purge" {
+		var err error
+		candidates, err = ai.ResolveMembers(s, i.GuildID, call.User)
+		if err != nil {
+			return err
+		}
+		if len(candidates) == 0 {
+			return fmt.Errorf("no members matched %q", call.User)
+		}
 	}
 
 	flowID := strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -338,11 +342,15 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 	}
 
 	var selected *ai.MemberCandidate
-	if len(candidates) == 1 {
-		candidate := candidates[0]
-		selected = &candidate
-		call.User = candidate.Member.User.ID
-		call.Confirmation = confirmationMessage(call, candidate)
+	if call.Tool != "purge" {
+		if len(candidates) == 1 {
+			candidate := candidates[0]
+			selected = &candidate
+			call.User = candidate.Member.User.ID
+			call.Confirmation = confirmationMessage(call, candidate)
+		}
+	} else {
+		call.Confirmation = ai.ConfirmationText(call, "")
 	}
 
 	var removeHandler func()
@@ -513,7 +521,7 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 
 	var initialEmbed *discordgo.MessageEmbed
 	var initialComponents []discordgo.MessageComponent
-	if selected != nil {
+	if selected != nil || call.Tool == "purge" {
 		initialEmbed = embeds.AIConfirmation(call.Confirmation)
 		initialComponents = confirmationComponents(confirmID, cancelID)
 	} else {
