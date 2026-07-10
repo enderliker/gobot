@@ -95,11 +95,7 @@ func init() {
 			}
 
 			if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Embeds: []*discordgo.MessageEmbed{embeds.AIConfirmation("Processing your AI request...")},
-					Flags:  discordgo.MessageFlagsEphemeral,
-				},
+				Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 			}); err != nil {
 				lease.Release()
 				log.Printf("[ASK] initial respond: %v", err)
@@ -118,8 +114,12 @@ func init() {
 					}
 					log.Printf("[ASK] provider %s: %v", cfg.Provider, err)
 					embed = embeds.Error("AI Error", ai.UserFacingError(err))
-					if err := sendChannelMessageWithRetry(s, i, embed, nil); err != nil {
-						log.Printf("[ASK] channel send failed after retries: %v", err)
+					if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+						Embeds:          &[]*discordgo.MessageEmbed{embed},
+						Components:      &[]discordgo.MessageComponent{},
+						AllowedMentions: allowedMentionsForActor(i),
+					}); err != nil {
+						log.Printf("[ASK] original response edit failed after retries: %v", err)
 					}
 				} else {
 					if ctx.Err() != nil || lifecycle.IsShuttingDown() {
@@ -129,18 +129,24 @@ func init() {
 						auditInteraction(i, "tool_call_proposed", "success", toolAuditFields(auditViewFromToolCall(call.Tool, call.User, "", call.Reason)))
 						if err := presentToolConfirmation(s, i, call); err != nil {
 							log.Printf("[ASK] tool confirmation: %v", err)
-							embed = embeds.Error("AI Action Error", err.Error())
-							if err := sendChannelMessageWithRetry(s, i, embed, nil); err != nil {
-								log.Printf("[ASK] channel send failed after retries: %v", err)
+							embed = toolExecutionErrorEmbed(err)
+							if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+								Embeds:          &[]*discordgo.MessageEmbed{embed},
+								Components:      &[]discordgo.MessageComponent{},
+								AllowedMentions: allowedMentionsForActor(i),
+							}); err != nil {
+								log.Printf("[ASK] original response edit failed after retries: %v", err)
 							}
 						}
 						return
 					}
 
 					answer := sanitizeAssistantVisibleText(result.Text, request.Prompt)
-					embed = embeds.AIResponse(cfg.Provider, cfg.Model, request.Prompt.UserPrompt, answer)
-					if err := sendChannelMessageWithRetry(s, i, embed, nil); err != nil {
-						log.Printf("[ASK] channel send failed after retries: %v", err)
+					if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+						Content:         stringPtr(plainAskResponseContent(answer)),
+						AllowedMentions: allowedMentionsForActor(i),
+					}); err != nil {
+						log.Printf("[ASK] original response edit failed after retries: %v", err)
 					}
 				}
 			})
@@ -298,36 +304,6 @@ func structuredToolCallFromAskResult(result *ai.AskResult) *ai.ToolCall {
 		return nil
 	}
 	return result.ToolCall
-}
-
-// sendChannelMessageWithRetry sends a regular channel message instead of an
-// interaction follow-up. This avoids the webhook-token path that is being
-// aggressively rate-limited by Cloudflare on the current host/IP.
-func sendChannelMessageWithRetry(s *discordgo.Session, i *discordgo.InteractionCreate, embed *discordgo.MessageEmbed, components []discordgo.MessageComponent) error {
-	const maxAttempts = 3
-	delays := []time.Duration{1 * time.Second, 3 * time.Second}
-
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if lifecycle.IsShuttingDown() {
-			return context.Canceled
-		}
-		if attempt > 0 {
-			time.Sleep(delays[attempt-1])
-		}
-		params := &discordgo.MessageSend{
-			Content:    actorMention(i),
-			Embeds:     []*discordgo.MessageEmbed{embed},
-			Components: components,
-		}
-		_, lastErr = s.ChannelMessageSendComplex(i.ChannelID, params)
-		if lastErr == nil {
-			return nil
-		}
-		log.Printf("[ASK] channel send attempt %d/%d failed: %v", attempt+1, maxAttempts, lastErr)
-	}
-
-	return lastErr
 }
 
 func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) error {
@@ -524,7 +500,17 @@ func presentToolConfirmation(s *discordgo.Session, i *discordgo.InteractionCreat
 		initialEmbed, initialComponents = memberSelectionView(call, candidates, 0, selectID, pagePrefix, cancelID)
 	}
 
-	if err := sendChannelMessageWithRetry(s, i, initialEmbed, initialComponents); err != nil {
+	publicNotice := "A moderation action requires private confirmation from the requester."
+	if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+		Content:         &publicNotice,
+		AllowedMentions: allowedMentionsForActor(i),
+		Components:      &[]discordgo.MessageComponent{},
+	}); err != nil {
+		removeHandler()
+		return err
+	}
+
+	if err := sendEphemeralFollowupWithRetry(s, i, initialEmbed, initialComponents); err != nil {
 		removeHandler()
 		return err
 	}
@@ -547,11 +533,84 @@ func toolExecutionErrorEmbed(err error) *discordgo.MessageEmbed {
 	return embeds.Error("AI Action Failed", ai.UserFacingToolExecutionError(err))
 }
 
-func actorMention(i *discordgo.InteractionCreate) string {
-	if userID := interactionUserID(i); userID != "" {
-		return "<@" + userID + ">"
+func allowedMentionsForActor(i *discordgo.InteractionCreate) *discordgo.MessageAllowedMentions {
+	return &discordgo.MessageAllowedMentions{
+		Parse: []discordgo.AllowedMentionType{},
 	}
-	return ""
+}
+
+func editDeferredInteractionResponseWithRetry(s *discordgo.Session, i *discordgo.InteractionCreate, edit *discordgo.WebhookEdit) error {
+	const maxAttempts = 3
+	delays := []time.Duration{1 * time.Second, 3 * time.Second}
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if lifecycle.IsShuttingDown() {
+			return context.Canceled
+		}
+		if attempt > 0 {
+			time.Sleep(delays[attempt-1])
+		}
+		_, lastErr = s.InteractionResponseEdit(i.Interaction, edit)
+		if lastErr == nil {
+			return nil
+		}
+		log.Printf("[ASK] deferred edit attempt %d/%d failed: %v", attempt+1, maxAttempts, lastErr)
+	}
+
+	return lastErr
+}
+
+func sendEphemeralFollowupWithRetry(s *discordgo.Session, i *discordgo.InteractionCreate, embed *discordgo.MessageEmbed, components []discordgo.MessageComponent) error {
+	const maxAttempts = 3
+	delays := []time.Duration{1 * time.Second, 3 * time.Second}
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if lifecycle.IsShuttingDown() {
+			return context.Canceled
+		}
+		if attempt > 0 {
+			time.Sleep(delays[attempt-1])
+		}
+		_, lastErr = s.FollowupMessageCreate(i.Interaction, false, &discordgo.WebhookParams{
+			Embeds:          []*discordgo.MessageEmbed{embed},
+			Components:      components,
+			AllowedMentions: allowedMentionsForActor(i),
+			Flags:           discordgo.MessageFlagsEphemeral,
+		})
+		if lastErr == nil {
+			return nil
+		}
+		log.Printf("[ASK] ephemeral followup attempt %d/%d failed: %v", attempt+1, maxAttempts, lastErr)
+	}
+
+	return lastErr
+}
+
+func plainAskResponseContent(answer string) string {
+	const maxContentLen = 2000
+	const truncationSuffix = "\n\n*Response truncated...*"
+
+	answer = strings.TrimSpace(answer)
+	if len(answer) <= maxContentLen {
+		return answer
+	}
+
+	runes := []rune(answer)
+	suffixRunes := []rune(truncationSuffix)
+	limit := maxContentLen - len(suffixRunes)
+	if limit <= 0 {
+		return string(suffixRunes[:maxContentLen])
+	}
+	if len(runes) > limit {
+		runes = runes[:limit]
+	}
+	return string(runes) + truncationSuffix
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
 
 func ephemeral(s *discordgo.Session, i *discordgo.InteractionCreate, embed *discordgo.MessageEmbed) {

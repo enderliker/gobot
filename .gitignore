@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 
-# Local deploy/build artifacts
+# Local build artifacts
 /build/
 /app
 /gobot
@@ -17,14 +17,12 @@
 # Go local caches
 /.gocache/
 
-# Python venv used for local tooling
-/.venv/
-/__pycache__/
+# SQLite data volume (used by docker compose in dev)
+/data/
 
 # Local agent/editor metadata
 /.agents/
 /.codex/
-/.repo-git/
 
-# Sensitive local deploy script with embedded credentials
+# Sensitive local deploy script with embedded credentials (legacy)
 /deploy.py

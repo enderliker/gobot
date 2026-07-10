@@ -1,0 +1,36 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: gobot_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: gobot_root_password
+      MYSQL_DATABASE: gobot_db
+      MYSQL_USER: gobot_user
+      MYSQL_PASSWORD: gobot_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gobot:
+    build: .
+    image: gobot:latest
+    container_name: gobot
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  mysql_data:

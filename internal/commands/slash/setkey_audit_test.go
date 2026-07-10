@@ -253,13 +253,25 @@ func stubDiscordEndpoints(t *testing.T, base string) func() {
 
 	prevDiscord := discordgo.EndpointDiscord
 	prevAPI := discordgo.EndpointAPI
+	prevGuilds := discordgo.EndpointGuilds
+	prevChannels := discordgo.EndpointChannels
+	prevUsers := discordgo.EndpointUsers
+	prevWebhooks := discordgo.EndpointWebhooks
 
 	discordgo.EndpointDiscord = base
 	discordgo.EndpointAPI = base + "api/v9/"
+	discordgo.EndpointGuilds = discordgo.EndpointAPI + "guilds/"
+	discordgo.EndpointChannels = discordgo.EndpointAPI + "channels/"
+	discordgo.EndpointUsers = discordgo.EndpointAPI + "users/"
+	discordgo.EndpointWebhooks = discordgo.EndpointAPI + "webhooks/"
 
 	return func() {
 		discordgo.EndpointDiscord = prevDiscord
 		discordgo.EndpointAPI = prevAPI
+		discordgo.EndpointGuilds = prevGuilds
+		discordgo.EndpointChannels = prevChannels
+		discordgo.EndpointUsers = prevUsers
+		discordgo.EndpointWebhooks = prevWebhooks
 	}
 }
 
