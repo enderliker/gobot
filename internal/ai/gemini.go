@@ -3,6 +3,7 @@ package ai
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -75,6 +76,8 @@ func (g *Gemini) ListModels(ctx context.Context, apiKey string) ([]string, error
 		Models []struct {
 			Name                       string   `json:"name"`
 			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+			InputTokenLimit            int      `json:"inputTokenLimit"`
+			OutputTokenLimit           int      `json:"outputTokenLimit"`
 		} `json:"models"`
 	}
 
@@ -89,9 +92,19 @@ func (g *Gemini) ListModels(ctx context.Context, apiKey string) ([]string, error
 
 	var models []string
 	for _, m := range data.Models {
+		nameLower := strings.ToLower(m.Name)
+		// Only allow gemini and imagen models
+		if !strings.Contains(nameLower, "gemini") && !strings.Contains(nameLower, "imagen") {
+			continue
+		}
+		// Ensure they have valid quota/token limit
+		if m.InputTokenLimit <= 0 && m.OutputTokenLimit <= 0 {
+			continue
+		}
+
 		supportsGenerate := false
 		for _, method := range m.SupportedGenerationMethods {
-			if method == "generateContent" {
+			if method == "generateContent" || method == "predict" {
 				supportsGenerate = true
 				break
 			}
@@ -121,6 +134,11 @@ func (g *Gemini) Ask(ctx context.Context, apiKey, model string, prompt PromptEnv
 	if model == "" {
 		model = "gemini-3.5-flash"
 	}
+
+	if IsImageModel(model) {
+		return g.generateImage(ctx, apiKey, model, prompt.UserPrompt)
+	}
+
 	payload := map[string]any{
 		"contents": []map[string]any{
 			{
@@ -272,4 +290,71 @@ func sanitizeGeminiSchema(value any) any {
 	default:
 		return value
 	}
+}
+
+func (g *Gemini) generateImage(ctx context.Context, apiKey, model, prompt string) (*AskResult, error) {
+	urlStr := "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(model) + ":predict?key=" + url.QueryEscape(apiKey)
+
+	reqPayload := map[string]any{
+		"instances": []map[string]any{
+			{
+				"prompt": prompt,
+			},
+		},
+		"parameters": map[string]any{
+			"sampleCount": 1,
+		},
+	}
+
+	bodyBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, sanitizeProviderError(err, apiKey)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, sanitizeProviderError(err, apiKey)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, sanitizeProviderError(parseGeminiError(resp.StatusCode, respBody), apiKey)
+	}
+
+	var data struct {
+		Predictions []struct {
+			BytesBase64Encoded string `json:"bytesBase64Encoded"`
+			MimeType           string `json:"mimeType"`
+		} `json:"predictions"`
+	}
+
+	if err := json.Unmarshal(respBody, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse image predictions: %w", err)
+	}
+
+	if len(data.Predictions) == 0 {
+		return nil, fmt.Errorf("no image predictions returned")
+	}
+
+	pred := data.Predictions[0]
+	imgData, err := base64.StdEncoding.DecodeString(pred.BytesBase64Encoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 image: %w", err)
+	}
+
+	return &AskResult{
+		ImageData:     imgData,
+		ImageMimeType: pred.MimeType,
+	}, nil
 }

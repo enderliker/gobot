@@ -3,6 +3,7 @@ package ai
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,6 +62,8 @@ func (o *OpenAI) ListModels(ctx context.Context, apiKey string) ([]string, error
 		"gpt-5.4-nano",
 		"gpt-4o",
 		"gpt-4o-mini",
+		"dall-e-3",
+		"dall-e-2",
 	}, nil
 }
 
@@ -68,6 +71,11 @@ func (o *OpenAI) Ask(ctx context.Context, apiKey, model string, prompt PromptEnv
 	if model == "" {
 		model = "gpt-5.4-mini"
 	}
+
+	if IsImageModel(model) {
+		return o.generateImage(ctx, apiKey, model, prompt.UserPrompt)
+	}
+
 	payload := map[string]any{
 		"model": model,
 		"messages": []map[string]string{
@@ -145,4 +153,67 @@ func openAITools(tools []ToolDefinition) []map[string]any {
 		})
 	}
 	return out
+}
+
+func (o *OpenAI) generateImage(ctx context.Context, apiKey, model, prompt string) (*AskResult, error) {
+	urlStr := "https://api.openai.com/v1/images/generations"
+
+	reqPayload := map[string]any{
+		"model":           model,
+		"prompt":          prompt,
+		"n":               1,
+		"size":            "1024x1024",
+		"response_format": "b64_json",
+	}
+
+	bodyBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, sanitizeProviderError(err, apiKey)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, sanitizeProviderError(err, apiKey)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, sanitizeProviderError(parseOpenAIError(resp.StatusCode, respBody), apiKey)
+	}
+
+	var data struct {
+		Data []struct {
+			B64JSON string `json:"b64_json"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(respBody, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse OpenAI image response: %w", err)
+	}
+
+	if len(data.Data) == 0 {
+		return nil, fmt.Errorf("no image returned from OpenAI")
+	}
+
+	imgData, err := base64.StdEncoding.DecodeString(data.Data[0].B64JSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 image: %w", err)
+	}
+
+	return &AskResult{
+		ImageData:     imgData,
+		ImageMimeType: "image/png",
+	}, nil
 }

@@ -23,8 +23,10 @@ type ToolDefinition struct {
 }
 
 type AskResult struct {
-	Text     string
-	ToolCall *ToolCall
+	Text          string
+	ToolCall      *ToolCall
+	ImageData     []byte
+	ImageMimeType string
 }
 
 type Manager struct {

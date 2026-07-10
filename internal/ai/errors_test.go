@@ -48,3 +48,36 @@ func (e timeoutErr) Timeout() bool   { return true }
 func (e timeoutErr) Temporary() bool { return true }
 
 var _ net.Error = timeoutErr{}
+
+func TestIsImageModel(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"gemini-3.1-flash-image-preview", false},
+		{"imagen-3.0-generate-002", true},
+		{"dall-e-3", true},
+		{"gpt-4o", false},
+	}
+	for _, tt := range tests {
+		if got := IsImageModel(tt.model); got != tt.want {
+			t.Errorf("IsImageModel(%q) = %v; want %v", tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestIsUserFacingError(t *testing.T) {
+	tests := []struct {
+		err  error
+		want bool
+	}{
+		{errors.New("429 resource_exhausted"), true},
+		{errors.New("unauthorized api key"), true},
+		{errors.New("some system error"), false},
+	}
+	for _, tt := range tests {
+		if got := IsUserFacingError(tt.err); got != tt.want {
+			t.Errorf("IsUserFacingError(%v) = %v; want %v", tt.err, got, tt.want)
+		}
+	}
+}

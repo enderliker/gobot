@@ -123,3 +123,8 @@ func sanitizeErrorMessage(msg string, secrets ...string) (string, bool) {
 
 	return sanitized, true
 }
+
+func IsImageModel(model string) bool {
+	m := strings.ToLower(model)
+	return strings.Contains(m, "imagen-") || strings.Contains(m, "dall-e")
+}

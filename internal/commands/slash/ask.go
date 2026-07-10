@@ -1,6 +1,7 @@
 package slash
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -106,7 +107,15 @@ func init() {
 			lifecycle.Go(func(ctx context.Context) {
 				defer lease.Release()
 
-				result, err := provider.Ask(ctx, cfg.APIKey, cfg.Model, request.Prompt, request.Tools)
+				reqTools := request.Tools
+				reqPrompt := request.Prompt
+				if ai.IsImageModel(cfg.Model) {
+					reqTools = nil
+					reqPrompt.BaseSystem = ""
+					reqPrompt.GuildSystem = ""
+				}
+
+				result, err := provider.Ask(ctx, cfg.APIKey, cfg.Model, reqPrompt, reqTools)
 
 				var embed *discordgo.MessageEmbed
 				if err != nil {
@@ -128,6 +137,25 @@ func init() {
 					if ctx.Err() != nil || lifecycle.IsShuttingDown() {
 						return
 					}
+					if len(result.ImageData) > 0 {
+						filename := "generated.png"
+						if strings.Contains(result.ImageMimeType, "jpeg") || strings.Contains(result.ImageMimeType, "jpg") {
+							filename = "generated.jpg"
+						}
+						file := &discordgo.File{
+							Name:        filename,
+							ContentType: result.ImageMimeType,
+							Reader:      bytes.NewReader(result.ImageData),
+						}
+						if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+							Files:           []*discordgo.File{file},
+							AllowedMentions: allowedMentionsForActor(i),
+						}); err != nil {
+							log.Printf("[ASK] original response edit with image attachment failed: %v", err)
+						}
+						return
+					}
+
 					if call := structuredToolCallFromAskResult(result); call != nil {
 						if handleDirectReadTool(s, i, call) {
 							return
@@ -147,7 +175,7 @@ func init() {
 						return
 					}
 
-					answer := sanitizeAssistantVisibleText(result.Text, request.Prompt)
+					answer := sanitizeAssistantVisibleText(result.Text, reqPrompt)
 					if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
 						Content:         stringPtr(plainAskResponseContent(answer)),
 						AllowedMentions: allowedMentionsForActor(i),
