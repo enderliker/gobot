@@ -55,8 +55,10 @@ func TestInviteHandlerRedirects(t *testing.T) {
 }
 
 func TestStatsAPIDegradesTo503WithoutDB(t *testing.T) {
+	t.Setenv("WEB_API_TOKEN", "test-token")
 	// Database.Default is nil in test environment if not initialized
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 
 	router := NewRouter()

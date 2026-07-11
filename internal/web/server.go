@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -72,7 +73,11 @@ func NewRouter() http.Handler {
 	r.Get("/docs", DocsHandler)
 	r.Get("/invite", InviteHandler)
 	r.Get("/healthz", HealthzHandler)
-	r.Get("/api/stats", StatsAPIHandler)
+
+	r.Route("/api", func(r chi.Router) {
+		r.Use(APIAuthMiddleware)
+		r.Get("/stats", StatsAPIHandler)
+	})
 
 	// 404 Handler
 	r.NotFound(NotFoundHandler)
@@ -84,7 +89,7 @@ func StartServer(port string) {
 	// Determine interface binding
 	bind := os.Getenv("WEB_BIND")
 	if bind == "" {
-		bind = "0.0.0.0"
+		bind = "127.0.0.1"
 	}
 	addr := bind + ":" + port
 
@@ -117,4 +122,34 @@ func StartServer(port string) {
 	}
 
 	log.Println("[WEB] Web server exited cleanly")
+}
+
+// APIAuthMiddleware protects /api/* endpoints using a token from WEB_API_TOKEN env var
+func APIAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := os.Getenv("WEB_API_TOKEN")
+		if token == "" {
+			log.Printf("[WEB-AUTH] WEB_API_TOKEN is not configured in env; denying access to %s", r.URL.Path)
+			http.Error(w, "Unauthorized (API token not configured)", http.StatusUnauthorized)
+			return
+		}
+
+		authHeader := r.Header.Get("Authorization")
+		reqToken := ""
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			reqToken = strings.TrimPrefix(authHeader, "Bearer ")
+		} else {
+			reqToken = r.Header.Get("X-API-Token")
+			if reqToken == "" {
+				reqToken = r.Header.Get("X-API-Key")
+			}
+		}
+
+		if reqToken == "" || reqToken != token {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }

@@ -41,6 +41,13 @@ func HasGuildPermission(session *discordgo.Session, guildID string, member *disc
 	}
 
 	var perms int64
+	for _, role := range guild.Roles {
+		if role.ID == guildID {
+			perms |= role.Permissions
+			break
+		}
+	}
+
 	for _, roleID := range member.Roles {
 		for _, role := range guild.Roles {
 			if role.ID == roleID {

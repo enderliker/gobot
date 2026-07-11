@@ -283,9 +283,28 @@ func (d *Database) SetGuildConfig(guildID, apiKey, provider, model string) error
 }
 
 func (d *Database) DeleteGuildConfig(guildID string) error {
-	q := d.format("DELETE FROM guild_config WHERE guild_id = ?")
-	_, err := d.db.Exec(q, guildID)
-	return err
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	q1 := d.format("DELETE FROM guild_prompt_config WHERE guild_id = ?")
+	if _, err := tx.Exec(q1, guildID); err != nil {
+		return err
+	}
+
+	q2 := d.format("DELETE FROM member_warnings WHERE guild_id = ?")
+	if _, err := tx.Exec(q2, guildID); err != nil {
+		return err
+	}
+
+	q3 := d.format("DELETE FROM guild_config WHERE guild_id = ?")
+	if _, err := tx.Exec(q3, guildID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 

@@ -1,6 +1,7 @@
 package slash
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -12,10 +13,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-func handleReadTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
+func handleReadTool(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
 	switch call.Tool {
 	case "warnings":
-		return handleWarningsTool(s, i, call)
+		return handleWarningsTool(ctx, s, i, call)
 	case "role_info":
 		return handleRoleInfoTool(s, i, call)
 	case "server_info":
@@ -32,8 +33,8 @@ func handleReadTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *
 	return false
 }
 
-func handleWarningsTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
-	candidates, err := ai.ResolveMembers(s, i.GuildID, call.User)
+func handleWarningsTool(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
+	candidates, err := ai.ResolveMembers(ctx, s, i.GuildID, call.User)
 	if err != nil || len(candidates) == 0 {
 		embed := embeds.Error("Member Not Found", fmt.Sprintf("No members matched %q", call.User))
 		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})

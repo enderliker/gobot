@@ -198,15 +198,16 @@ func (l *discordWriteLimiter) Wait() {
 	}
 
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	now := time.Now()
-	if wait := time.Until(l.nextAllowed); wait > 0 {
+	var wait time.Duration
+	if wait = time.Until(l.nextAllowed); wait > 0 {
+		l.nextAllowed = l.nextAllowed.Add(l.minInterval)
+		l.mu.Unlock()
 		time.Sleep(wait)
-		now = time.Now()
+		return
 	}
-
 	l.nextAllowed = now.Add(l.minInterval)
+	l.mu.Unlock()
 }
 
 func newDiscordAPICircuitBreaker(now func() time.Time) *discordAPICircuitBreaker {

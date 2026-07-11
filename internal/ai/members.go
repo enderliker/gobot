@@ -1,17 +1,19 @@
 package ai
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 const (
 	minMemberMatchScore = 0.75
-	maxMemberSearchREST = 1000
+	maxMemberSearchREST = 50
 )
 
 type MemberCandidate struct {
@@ -19,7 +21,7 @@ type MemberCandidate struct {
 	Score  float64
 }
 
-func ResolveMembers(session *discordgo.Session, guildID, query string) ([]MemberCandidate, error) {
+func ResolveMembers(ctx context.Context, session *discordgo.Session, guildID, query string) ([]MemberCandidate, error) {
 	query = normalizeUserReference(query)
 	if query == "" {
 		return nil, fmt.Errorf("member query is empty")
@@ -56,7 +58,10 @@ func ResolveMembers(session *discordgo.Session, guildID, query string) ([]Member
 	}
 
 	for _, searchQuery := range memberSearchQueries(query) {
-		members, err := session.GuildMembersSearch(guildID, searchQuery, maxMemberSearchREST)
+		if utf8.RuneCountInString(searchQuery) < 3 {
+			continue
+		}
+		members, err := session.GuildMembersSearch(guildID, searchQuery, maxMemberSearchREST, discordgo.WithContext(ctx))
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err

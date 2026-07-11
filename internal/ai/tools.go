@@ -839,12 +839,18 @@ func toolRequiresHierarchyCheck(tool string) bool {
 	return false
 }
 
-func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *discordgo.Member, call *ToolCall) error {
+func ExecuteTool(ctx context.Context, session *discordgo.Session, guildID, channelID string, actor *discordgo.Member, call *ToolCall) error {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+	}
+
 	if toolRequiresTargetUser(call.Tool) && !isDiscordID(call.User) {
 		return fmt.Errorf(toolErrTargetUserNotResolved)
 	}
 
-	botMember, err := session.GuildMember(guildID, session.State.User.ID)
+	botMember, err := session.GuildMember(guildID, session.State.User.ID, discordgo.WithContext(ctx))
 	if err != nil {
 		if isDiscordRESTErrorCode(err, discordgo.ErrCodeUnknownMember) {
 			return fmt.Errorf(toolErrBotMemberNotFound)
@@ -853,7 +859,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 	}
 
 	if toolRequiresHierarchyCheck(call.Tool) {
-		target, err := session.GuildMember(guildID, call.User)
+		target, err := session.GuildMember(guildID, call.User, discordgo.WithContext(ctx))
 		if err != nil {
 			if isDiscordRESTErrorCode(err, discordgo.ErrCodeUnknownMember) {
 				return fmt.Errorf(toolErrTargetMemberNotFound)
@@ -861,10 +867,10 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 			return fmt.Errorf(toolErrTargetMemberLookupFailed)
 		}
 
-		if !memberAbove(session, guildID, actor, target) {
+		if !memberAbove(ctx, session, guildID, actor, target) {
 			return fmt.Errorf(toolErrRoleHierarchyPreventsAction)
 		}
-		if !memberAbove(session, guildID, botMember, target) {
+		if !memberAbove(ctx, session, guildID, botMember, target) {
 			return fmt.Errorf(toolErrBotRoleHierarchyPreventsAction)
 		}
 	}
@@ -877,7 +883,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionBanMembers) {
 			return fmt.Errorf(toolErrBotMissingBanMembersPermission)
 		}
-		return normalizeDiscordToolActionError(session.GuildBanCreateWithReason(guildID, call.User, call.Reason, 0))
+		return normalizeDiscordToolActionError(session.GuildBanCreateWithReason(guildID, call.User, call.Reason, 0, discordgo.WithContext(ctx)))
 	case "unban":
 		// Require Administrator: without the ban audit log we cannot verify who applied
 		// the ban, so we restrict unban to admins/owner to prevent a lower-ranked mod
@@ -888,7 +894,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionBanMembers) {
 			return fmt.Errorf(toolErrBotMissingBanMembersPermission)
 		}
-		return normalizeDiscordToolActionError(session.GuildBanDelete(guildID, call.User))
+		return normalizeDiscordToolActionError(session.GuildBanDelete(guildID, call.User, discordgo.WithContext(ctx)))
 	case "kick":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionKickMembers) {
 			return fmt.Errorf(toolErrMissingKickMembersPermission)
@@ -896,7 +902,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionKickMembers) {
 			return fmt.Errorf(toolErrBotMissingKickMembersPermission)
 		}
-		return normalizeDiscordToolActionError(session.GuildMemberDeleteWithReason(guildID, call.User, call.Reason))
+		return normalizeDiscordToolActionError(session.GuildMemberDeleteWithReason(guildID, call.User, call.Reason, discordgo.WithContext(ctx)))
 	case "timeout":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionModerateMembers) {
 			return fmt.Errorf(toolErrMissingModerateMembersPermission)
@@ -905,7 +911,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 			return fmt.Errorf(toolErrBotMissingModerateMembersPermission)
 		}
 		until := time.Now().Add(time.Duration(call.Minutes) * time.Minute)
-		return normalizeDiscordToolActionError(session.GuildMemberTimeout(guildID, call.User, &until))
+		return normalizeDiscordToolActionError(session.GuildMemberTimeout(guildID, call.User, &until, discordgo.WithContext(ctx)))
 	case "untimeout":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionModerateMembers) {
 			return fmt.Errorf(toolErrMissingModerateMembersPermission)
@@ -913,7 +919,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionModerateMembers) {
 			return fmt.Errorf(toolErrBotMissingModerateMembersPermission)
 		}
-		return normalizeDiscordToolActionError(session.GuildMemberTimeout(guildID, call.User, nil))
+		return normalizeDiscordToolActionError(session.GuildMemberTimeout(guildID, call.User, nil, discordgo.WithContext(ctx)))
 	case "purge":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageMessages) {
 			return fmt.Errorf(toolErrMissingManageMessagesPermission)
@@ -921,7 +927,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionManageMessages) {
 			return fmt.Errorf(toolErrBotMissingManageMessagesPermission)
 		}
-		messages, err := session.ChannelMessages(channelID, call.Count, "", "", "")
+		messages, err := session.ChannelMessages(channelID, call.Count, "", "", "", discordgo.WithContext(ctx))
 		if err != nil {
 			return normalizeDiscordToolActionError(err)
 		}
@@ -941,7 +947,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if len(messageIDs) == 0 {
 			return nil
 		}
-		return normalizeDiscordToolActionError(session.ChannelMessagesBulkDelete(channelID, messageIDs))
+		return normalizeDiscordToolActionError(session.ChannelMessagesBulkDelete(channelID, messageIDs, discordgo.WithContext(ctx)))
 	case "warn":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionKickMembers) {
 			return fmt.Errorf(toolErrMissingKickMembersPermission)
@@ -958,9 +964,9 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if g, err := session.State.Guild(guildID); err == nil && g != nil {
 			guildName = g.Name
 		}
-		dmChan, dmErr := session.UserChannelCreate(call.User)
+		dmChan, dmErr := session.UserChannelCreate(call.User, discordgo.WithContext(ctx))
 		if dmErr == nil && dmChan != nil {
-			_, _ = session.ChannelMessageSend(dmChan.ID, fmt.Sprintf("You have been warned in **%s** for: %s", guildName, call.Reason))
+			_, _ = session.ChannelMessageSend(dmChan.ID, fmt.Sprintf("You have been warned in **%s** for: %s", guildName, call.Reason), discordgo.WithContext(ctx))
 		}
 		return nil
 
@@ -987,7 +993,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if err != nil {
 			return fmt.Errorf(toolErrChannelNotFound)
 		}
-		return normalizeDiscordToolActionError(session.GuildMemberMove(guildID, call.User, &targetChan.ID))
+		return normalizeDiscordToolActionError(session.GuildMemberMove(guildID, call.User, &targetChan.ID, discordgo.WithContext(ctx)))
 
 	case "disconnect_voice":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionVoiceMoveMembers) {
@@ -996,7 +1002,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionVoiceMoveMembers) {
 			return fmt.Errorf(toolErrBotMissingMoveMembersPermission)
 		}
-		return normalizeDiscordToolActionError(session.GuildMemberMove(guildID, call.User, nil))
+		return normalizeDiscordToolActionError(session.GuildMemberMove(guildID, call.User, nil, discordgo.WithContext(ctx)))
 
 	case "deafen":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionVoiceDeafenMembers) {
@@ -1005,7 +1011,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionVoiceDeafenMembers) {
 			return fmt.Errorf(toolErrBotMissingDeafenMembersPermission)
 		}
-		return normalizeDiscordToolActionError(session.GuildMemberDeafen(guildID, call.User, true))
+		return normalizeDiscordToolActionError(session.GuildMemberDeafen(guildID, call.User, true, discordgo.WithContext(ctx)))
 
 	case "undeafen":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionVoiceDeafenMembers) {
@@ -1014,7 +1020,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionVoiceDeafenMembers) {
 			return fmt.Errorf(toolErrBotMissingDeafenMembersPermission)
 		}
-		return normalizeDiscordToolActionError(session.GuildMemberDeafen(guildID, call.User, false))
+		return normalizeDiscordToolActionError(session.GuildMemberDeafen(guildID, call.User, false, discordgo.WithContext(ctx)))
 
 	case "slowmode":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageChannels) {
@@ -1026,7 +1032,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		rate := call.Duration
 		_, err := session.ChannelEdit(channelID, &discordgo.ChannelEdit{
 			RateLimitPerUser: &rate,
-		})
+		}, discordgo.WithContext(ctx))
 		return normalizeDiscordToolActionError(err)
 
 	case "lock_channel":
@@ -1036,7 +1042,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionManageChannels) {
 			return fmt.Errorf(toolErrBotMissingManageChannelsPermission)
 		}
-		ch, err := session.Channel(channelID)
+		ch, err := session.Channel(channelID, discordgo.WithContext(ctx))
 		if err != nil {
 			return normalizeDiscordToolActionError(err)
 		}
@@ -1049,7 +1055,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 				break
 			}
 		}
-		return normalizeDiscordToolActionError(session.ChannelPermissionSet(channelID, guildID, discordgo.PermissionOverwriteTypeRole, allow, deny))
+		return normalizeDiscordToolActionError(session.ChannelPermissionSet(channelID, guildID, discordgo.PermissionOverwriteTypeRole, allow, deny, discordgo.WithContext(ctx)))
 
 	case "unlock_channel":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageChannels) {
@@ -1058,7 +1064,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionManageChannels) {
 			return fmt.Errorf(toolErrBotMissingManageChannelsPermission)
 		}
-		ch, err := session.Channel(channelID)
+		ch, err := session.Channel(channelID, discordgo.WithContext(ctx))
 		if err != nil {
 			return normalizeDiscordToolActionError(err)
 		}
@@ -1071,9 +1077,9 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 			}
 		}
 		if allow == 0 && deny == 0 {
-			return normalizeDiscordToolActionError(session.ChannelPermissionDelete(channelID, guildID))
+			return normalizeDiscordToolActionError(session.ChannelPermissionDelete(channelID, guildID, discordgo.WithContext(ctx)))
 		}
-		return normalizeDiscordToolActionError(session.ChannelPermissionSet(channelID, guildID, discordgo.PermissionOverwriteTypeRole, allow, deny))
+		return normalizeDiscordToolActionError(session.ChannelPermissionSet(channelID, guildID, discordgo.PermissionOverwriteTypeRole, allow, deny, discordgo.WithContext(ctx)))
 
 	case "set_topic":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageChannels) {
@@ -1084,7 +1090,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		}
 		_, err := session.ChannelEdit(channelID, &discordgo.ChannelEdit{
 			Topic: call.Text,
-		})
+		}, discordgo.WithContext(ctx))
 		return normalizeDiscordToolActionError(err)
 
 	case "rename_channel":
@@ -1096,7 +1102,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		}
 		_, err := session.ChannelEdit(channelID, &discordgo.ChannelEdit{
 			Name: call.Text,
-		})
+		}, discordgo.WithContext(ctx))
 		return normalizeDiscordToolActionError(err)
 
 	case "assign_role":
@@ -1110,13 +1116,13 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if err != nil {
 			return fmt.Errorf(toolErrRoleNotFound)
 		}
-		if !roleBelowMember(session, guildID, actor, role) {
+		if !roleBelowMember(ctx, session, guildID, actor, role) {
 			return fmt.Errorf(toolErrRoleHierarchyPreventsAction)
 		}
-		if !roleBelowMember(session, guildID, botMember, role) {
+		if !roleBelowMember(ctx, session, guildID, botMember, role) {
 			return fmt.Errorf(toolErrBotRoleHierarchyPreventsAction)
 		}
-		return normalizeDiscordToolActionError(session.GuildMemberRoleAdd(guildID, call.User, role.ID))
+		return normalizeDiscordToolActionError(session.GuildMemberRoleAdd(guildID, call.User, role.ID, discordgo.WithContext(ctx)))
 
 	case "remove_role":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageRoles) {
@@ -1129,13 +1135,13 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if err != nil {
 			return fmt.Errorf(toolErrRoleNotFound)
 		}
-		if !roleBelowMember(session, guildID, actor, role) {
+		if !roleBelowMember(ctx, session, guildID, actor, role) {
 			return fmt.Errorf(toolErrRoleHierarchyPreventsAction)
 		}
-		if !roleBelowMember(session, guildID, botMember, role) {
+		if !roleBelowMember(ctx, session, guildID, botMember, role) {
 			return fmt.Errorf(toolErrBotRoleHierarchyPreventsAction)
 		}
-		return normalizeDiscordToolActionError(session.GuildMemberRoleRemove(guildID, call.User, role.ID))
+		return normalizeDiscordToolActionError(session.GuildMemberRoleRemove(guildID, call.User, role.ID, discordgo.WithContext(ctx)))
 
 	case "create_role":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageRoles) {
@@ -1148,7 +1154,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		_, err := session.GuildRoleCreate(guildID, &discordgo.RoleParams{
 			Name:  call.Text,
 			Color: colorVal,
-		})
+		}, discordgo.WithContext(ctx))
 		return normalizeDiscordToolActionError(err)
 
 	case "delete_role":
@@ -1162,13 +1168,13 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if err != nil {
 			return fmt.Errorf(toolErrRoleNotFound)
 		}
-		if !roleBelowMember(session, guildID, actor, role) {
+		if !roleBelowMember(ctx, session, guildID, actor, role) {
 			return fmt.Errorf(toolErrRoleHierarchyPreventsAction)
 		}
-		if !roleBelowMember(session, guildID, botMember, role) {
+		if !roleBelowMember(ctx, session, guildID, botMember, role) {
 			return fmt.Errorf(toolErrBotRoleHierarchyPreventsAction)
 		}
-		return normalizeDiscordToolActionError(session.GuildRoleDelete(guildID, role.ID))
+		return normalizeDiscordToolActionError(session.GuildRoleDelete(guildID, role.ID, discordgo.WithContext(ctx)))
 
 	case "send_message":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageMessages) {
@@ -1181,7 +1187,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if err != nil {
 			return fmt.Errorf(toolErrChannelNotFound)
 		}
-		_, err = session.ChannelMessageSend(targetChan.ID, call.Text)
+		_, err = session.ChannelMessageSend(targetChan.ID, call.Text, discordgo.WithContext(ctx))
 		return normalizeDiscordToolActionError(err)
 
 	case "pin_message":
@@ -1191,7 +1197,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionManageMessages) {
 			return fmt.Errorf(toolErrBotMissingManageMessagesPermission)
 		}
-		return normalizeDiscordToolActionError(session.ChannelMessagePin(channelID, call.MessageID))
+		return normalizeDiscordToolActionError(session.ChannelMessagePin(channelID, call.MessageID, discordgo.WithContext(ctx)))
 
 	case "unpin_message":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageMessages) {
@@ -1200,7 +1206,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionManageMessages) {
 			return fmt.Errorf(toolErrBotMissingManageMessagesPermission)
 		}
-		return normalizeDiscordToolActionError(session.ChannelMessageUnpin(channelID, call.MessageID))
+		return normalizeDiscordToolActionError(session.ChannelMessageUnpin(channelID, call.MessageID, discordgo.WithContext(ctx)))
 
 	case "create_thread":
 		if !hasPermission(session, guildID, actor, discordgo.PermissionManageMessages) {
@@ -1209,7 +1215,7 @@ func ExecuteTool(session *discordgo.Session, guildID, channelID string, actor *d
 		if !hasPermission(session, guildID, botMember, discordgo.PermissionManageMessages) {
 			return fmt.Errorf(toolErrBotMissingManageMessagesPermission)
 		}
-		_, err := session.ThreadStart(channelID, call.Text, discordgo.ChannelTypeGuildPublicThread, 1440)
+		_, err := session.ThreadStart(channelID, call.Text, discordgo.ChannelTypeGuildPublicThread, 1440, discordgo.WithContext(ctx))
 		return normalizeDiscordToolActionError(err)
 
 	case "member_info", "warnings", "role_info", "server_info", "channel_info", "role_list", "audit_log", "voice_status":
@@ -1511,12 +1517,12 @@ func hasPermission(session *discordgo.Session, guildID string, member *discordgo
 	return discordperm.HasGuildPermission(session, guildID, member, permission)
 }
 
-func memberAbove(session *discordgo.Session, guildID string, actor, target *discordgo.Member) bool {
+func memberAbove(ctx context.Context, session *discordgo.Session, guildID string, actor, target *discordgo.Member) bool {
 	guild, err := session.State.Guild(guildID)
 	// Fall back to the API if the state doesn't have this guild OR if the state
 	// guild has no roles loaded (can happen after reconnection on large guilds).
 	if err != nil || guild == nil || len(guild.Roles) == 0 {
-		guild, err = session.Guild(guildID)
+		guild, err = session.Guild(guildID, discordgo.WithContext(ctx))
 		if err != nil {
 			return false
 		}
@@ -1548,14 +1554,14 @@ func highestRolePosition(guildRoles []*discordgo.Role, memberRoles []string) int
 	return positions[len(positions)-1]
 }
 
-func roleBelowMember(session *discordgo.Session, guildID string, member *discordgo.Member, role *discordgo.Role) bool {
+func roleBelowMember(ctx context.Context, session *discordgo.Session, guildID string, member *discordgo.Member, role *discordgo.Role) bool {
 	if discordperm.IsGuildOwner(session, guildID, member) {
 		return true
 	}
 
 	guild, err := session.State.Guild(guildID)
 	if err != nil || guild == nil || len(guild.Roles) == 0 {
-		guild, err = session.Guild(guildID)
+		guild, err = session.Guild(guildID, discordgo.WithContext(ctx))
 		if err != nil {
 			return false
 		}
