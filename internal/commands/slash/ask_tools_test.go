@@ -55,7 +55,7 @@ func TestPrepareAskProviderRequestScopesToolsAndKeepsTextJSONAsText(t *testing.T
 		t.Fatalf("get guild system prompt: %v", err)
 	}
 
-	request, err := prepareAskProviderRequest(session, interaction, "question", guildSystem)
+	request, err := prepareAskProviderRequest(session, interaction, "question", guildSystem, nil)
 	if err != nil {
 		t.Fatalf("unexpected prepareAskProviderRequest error: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestPersistedGuildSystemPromptFlowsIntoAskEnvelope(t *testing.T) {
 		t.Fatalf("get guild system prompt: %v", err)
 	}
 
-	request, err := prepareAskProviderRequest(session, interaction, "How should I answer?", storedPrompt)
+	request, err := prepareAskProviderRequest(session, interaction, "How should I answer?", storedPrompt, nil)
 	if err != nil {
 		t.Fatalf("prepareAskProviderRequest: %v", err)
 	}

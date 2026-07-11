@@ -53,6 +53,9 @@ func TestAskExecuteDeferredSuccessWithoutToolEditsOriginalPublicResponse(t *test
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/callback"):
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/channels/"+testAskChannelID+"/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"100000000000000009","channel_id":"` + testAskChannelID + `","content":"ok"}`))
@@ -174,6 +177,9 @@ func TestAskExecuteToolCallUsesPublicNoticeAndPrivateConfirmation(t *testing.T) 
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/callback"):
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/channels/"+testAskChannelID+"/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/guilds/"+testAskGuildID+"/members/search"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`[]`))
@@ -301,6 +307,9 @@ func TestAskExecuteToolCallFollowupFailureSanitizesPublicError(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/callback"):
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/channels/"+testAskChannelID+"/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/guilds/"+testAskGuildID+"/members/search"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`[]`))
@@ -562,6 +571,9 @@ func TestAskExecuteLongResponseTruncation(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/callback"):
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/channels/"+testAskChannelID+"/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"100000000000000009","channel_id":"` + testAskChannelID + `","content":"ok"}`))
@@ -642,6 +654,9 @@ func TestAskExecuteLongResponseMultiMessageSplitting(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/callback"):
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/channels/"+testAskChannelID+"/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"100000000000000009","channel_id":"` + testAskChannelID + `","content":"ok"}`))
@@ -717,5 +732,100 @@ func TestAskExecuteLongResponseMultiMessageSplitting(t *testing.T) {
 	content3 := payload3["content"].(string)
 	if content3 != strings.Repeat("C", 500) {
 		t.Fatalf("third chunk does not match expected output")
+	}
+}
+
+func TestAskExecuteIncludesChannelHistoryContext(t *testing.T) {
+	d := newSlashTestDatabase(t)
+	if err := d.SetGuildConfig(testAskGuildID, "secret-api-key", "Capture", "model-1"); err != nil {
+		t.Fatalf("set guild config: %v", err)
+	}
+
+	capture := &capturingAskProvider{
+		result: &ai.AskResult{Text: "Response text"},
+	}
+	restoreManager := stubAIManager(t, capture)
+	defer restoreManager()
+
+	restoreLimiter := stubAskLimiterForTest()
+	defer restoreLimiter()
+
+	recorder := &discordRequestRecorder{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.add(t, r)
+
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/callback"):
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/channels/"+testAskChannelID+"/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[
+				{"id":"msg-2","channel_id":"` + testAskChannelID + `","content":"msg 2 content","author":{"id":"user-2","username":"user2"}},
+				{"id":"msg-1","channel_id":"` + testAskChannelID + `","content":"msg 1 content","author":{"id":"user-1","username":"user1"}}
+			]`))
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"original-id","content":"ok"}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	restoreEndpoints := stubDiscordEndpoints(t, server.URL+"/")
+	defer restoreEndpoints()
+
+	lifecycle.Init()
+	defer func() {
+		lifecycle.Cancel()
+		lifecycle.Wait()
+	}()
+
+	session, err := discordgo.New("Bot test-token")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.Client = server.Client()
+	session.SyncEvents = true
+
+	seedAskGuildState(t, session, []*discordgo.Member{
+		{
+			User:  &discordgo.User{ID: testAskUserID, Username: "requester"},
+			Roles: []string{testAskRoleID},
+		},
+	})
+
+	cmd := registeredSlashCommand(t, "ask")
+	cmd.Execute(session, newAskInteractionForUser(testAskUserID, []string{testAskRoleID}, "Is the sky blue?"))
+
+	// Expect 3 requests: callback, get messages, patch original
+	recorder.waitForCount(t, 3)
+	lifecycle.Wait()
+
+	requests := recorder.snapshot()
+	_ = findDiscordRequest(t, requests, http.MethodPost, "/interactions/"+testAskInteractionID+"/"+testAskToken+"/callback")
+	_ = findDiscordRequest(t, requests, http.MethodGet, "/channels/"+testAskChannelID+"/messages")
+	_ = findDiscordRequest(t, requests, http.MethodPatch, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original")
+
+	// Verify the prompt passed to the provider
+	prompt := capture.receivedPrompt
+	if !strings.Contains(prompt.BaseSystem, "CHANNEL_HISTORY_BLOCK_") {
+		t.Errorf("expected BaseSystem to contain channel history instructions, got:\n%s", prompt.BaseSystem)
+	}
+	if !strings.Contains(prompt.BaseSystem, "untrusted reference history") {
+		t.Errorf("expected BaseSystem to contain untrusted reference instructions, got:\n%s", prompt.BaseSystem)
+	}
+
+	if !strings.Contains(prompt.UserPrompt, "CHANNEL_HISTORY_BLOCK_") {
+		t.Errorf("expected UserPrompt to contain boundary delimiters, got:\n%s", prompt.UserPrompt)
+	}
+	if !strings.Contains(prompt.UserPrompt, "user1: msg 1 content") {
+		t.Errorf("expected UserPrompt to contain chronological history context from user1, got:\n%s", prompt.UserPrompt)
+	}
+	if !strings.Contains(prompt.UserPrompt, "user2: msg 2 content") {
+		t.Errorf("expected UserPrompt to contain chronological history context from user2, got:\n%s", prompt.UserPrompt)
+	}
+	if !strings.HasSuffix(prompt.UserPrompt, "Question: Is the sky blue?") {
+		t.Errorf("expected UserPrompt to end with the question, got:\n%s", prompt.UserPrompt)
 	}
 }

@@ -3,6 +3,7 @@ package slash
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -30,17 +31,14 @@ func init() {
 						{Name: "clearkey — delete the AI API key and settings for this server", Value: "clearkey"},
 						{Name: "setprompt — configure the server's GuildSystem prompt", Value: "setprompt"},
 						{Name: "getprompt — view or edit the server's GuildSystem prompt", Value: "getprompt"},
+						{Name: "channel_context — number of recent messages passed as context (0 = default 5, 1–20)", Value: "channel_context"},
 					},
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "value",
-					Description: "New value for the setting (not required for clearkey)",
+					Description: "New value for the setting (on/off for multi_message; 0–20 for channel_context)",
 					Required:    false,
-					Choices: []*discordgo.ApplicationCommandOptionChoice{
-						{Name: "on", Value: "on"},
-						{Name: "off", Value: "off"},
-					},
 				},
 			},
 		},
@@ -176,6 +174,58 @@ func executeConfig(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			"prompt_length": utf8.RuneCountInString(prompt),
 		})
 		presentGuildPromptFlow(s, i, guildPromptSummaryView, prompt)
+
+	case "channel_context":
+		if value == "" {
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Embeds: []*discordgo.MessageEmbed{embeds.Error("Missing Value", "The 'channel_context' setting requires a numeric value between 0 and 20.\n`0` resets to the default (5 messages).")},
+					Flags:  discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+		limit, parseErr := strconv.Atoi(value)
+		if parseErr != nil || limit < 0 || limit > 20 {
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Embeds: []*discordgo.MessageEmbed{embeds.Error("Invalid Value", "The 'channel_context' value must be a whole number between 0 and 20.")},
+					Flags:  discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+		if err := database.Default.SetGuildChannelContextLimit(i.GuildID, limit); err != nil {
+			log.Printf("[CONFIG] SetGuildChannelContextLimit %s: %v", i.GuildID, err)
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Embeds: []*discordgo.MessageEmbed{embeds.Error("Error", "Failed to save setting. Please try again.")},
+					Flags:  discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+		var description string
+		if limit == 0 {
+			description = "Channel context has been **reset to the default** (5 recent messages)."
+		} else {
+			description = fmt.Sprintf("The last **%d** messages in the channel will be passed as context to the AI.", limit)
+		}
+		embed := &discordgo.MessageEmbed{
+			Title:       fmt.Sprintf("✅ Setting Updated: channel_context = %d", limit),
+			Description: description,
+			Color:       0x57F287,
+		}
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Embeds: []*discordgo.MessageEmbed{embed},
+				Flags:  discordgo.MessageFlagsEphemeral,
+			},
+		})
 
 	default:
 		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{

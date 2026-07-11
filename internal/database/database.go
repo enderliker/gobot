@@ -21,11 +21,12 @@ import (
 const MaxGuildSystemPromptChars = 4000
 
 type GuildConfig struct {
-	GuildID      string
-	APIKey       string
-	Provider     string
-	Model        string
-	MultiMessage bool
+	GuildID             string
+	APIKey              string
+	Provider            string
+	Model               string
+	MultiMessage        bool
+	ChannelContextLimit int // 0 means "use default"
 }
 
 type Database struct {
@@ -106,19 +107,22 @@ func (d *Database) migrate() error {
 	var q string
 	var alterModel string
 	var alterMultiMessage string
+	var alterChannelContextLimit string
 	var promptTable string
 	var warningsTable string
 	if d.driver == "mysql" {
 		q = `CREATE TABLE IF NOT EXISTS guild_config (
-			guild_id      VARCHAR(20)  PRIMARY KEY,
-			api_key       TEXT         NOT NULL,
-			provider      VARCHAR(64)  NOT NULL,
-			model         VARCHAR(128) NOT NULL DEFAULT '',
-			multi_message TINYINT(1)   NOT NULL DEFAULT 0,
-			updated_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+			guild_id               VARCHAR(20)  PRIMARY KEY,
+			api_key                TEXT         NOT NULL,
+			provider               VARCHAR(64)  NOT NULL,
+			model                  VARCHAR(128) NOT NULL DEFAULT '',
+			multi_message          TINYINT(1)   NOT NULL DEFAULT 0,
+			channel_context_limit  SMALLINT     NOT NULL DEFAULT 0,
+			updated_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 		)`
 		alterModel = `ALTER TABLE guild_config ADD COLUMN model VARCHAR(128) NOT NULL DEFAULT ''`
 		alterMultiMessage = `ALTER TABLE guild_config ADD COLUMN multi_message TINYINT(1) NOT NULL DEFAULT 0`
+		alterChannelContextLimit = `ALTER TABLE guild_config ADD COLUMN channel_context_limit SMALLINT NOT NULL DEFAULT 0`
 		promptTable = `CREATE TABLE IF NOT EXISTS guild_prompt_config (
 			guild_id             VARCHAR(20)  PRIMARY KEY,
 			guild_system_prompt  TEXT         NOT NULL,
@@ -134,15 +138,17 @@ func (d *Database) migrate() error {
 		)`
 	} else if d.driver == "postgres" {
 		q = `CREATE TABLE IF NOT EXISTS guild_config (
-			guild_id      TEXT PRIMARY KEY,
-			api_key       TEXT NOT NULL,
-			provider      TEXT NOT NULL,
-			model         TEXT NOT NULL DEFAULT '',
-			multi_message BOOLEAN NOT NULL DEFAULT FALSE,
-			updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			guild_id               TEXT PRIMARY KEY,
+			api_key                TEXT NOT NULL,
+			provider               TEXT NOT NULL,
+			model                  TEXT NOT NULL DEFAULT '',
+			multi_message          BOOLEAN NOT NULL DEFAULT FALSE,
+			channel_context_limit  INTEGER NOT NULL DEFAULT 0,
+			updated_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`
 		alterModel = `ALTER TABLE guild_config ADD COLUMN model TEXT NOT NULL DEFAULT ''`
 		alterMultiMessage = `ALTER TABLE guild_config ADD COLUMN multi_message BOOLEAN NOT NULL DEFAULT FALSE`
+		alterChannelContextLimit = `ALTER TABLE guild_config ADD COLUMN channel_context_limit INTEGER NOT NULL DEFAULT 0`
 		promptTable = `CREATE TABLE IF NOT EXISTS guild_prompt_config (
 			guild_id            TEXT PRIMARY KEY,
 			guild_system_prompt TEXT NOT NULL,
@@ -158,15 +164,17 @@ func (d *Database) migrate() error {
 		)`
 	} else {
 		q = `CREATE TABLE IF NOT EXISTS guild_config (
-			guild_id      TEXT PRIMARY KEY,
-			api_key       TEXT NOT NULL,
-			provider      TEXT NOT NULL,
-			model         TEXT NOT NULL DEFAULT '',
-			multi_message INTEGER NOT NULL DEFAULT 0,
-			updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			guild_id               TEXT PRIMARY KEY,
+			api_key                TEXT NOT NULL,
+			provider               TEXT NOT NULL,
+			model                  TEXT NOT NULL DEFAULT '',
+			multi_message          INTEGER NOT NULL DEFAULT 0,
+			channel_context_limit  INTEGER NOT NULL DEFAULT 0,
+			updated_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`
 		alterModel = `ALTER TABLE guild_config ADD COLUMN model TEXT NOT NULL DEFAULT ''`
 		alterMultiMessage = `ALTER TABLE guild_config ADD COLUMN multi_message INTEGER NOT NULL DEFAULT 0`
+		alterChannelContextLimit = `ALTER TABLE guild_config ADD COLUMN channel_context_limit INTEGER NOT NULL DEFAULT 0`
 		promptTable = `CREATE TABLE IF NOT EXISTS guild_prompt_config (
 			guild_id            TEXT PRIMARY KEY,
 			guild_system_prompt TEXT NOT NULL,
@@ -186,6 +194,7 @@ func (d *Database) migrate() error {
 	}
 	_, _ = d.db.Exec(alterModel)
 	_, _ = d.db.Exec(alterMultiMessage)
+	_, _ = d.db.Exec(alterChannelContextLimit)
 	if _, err := d.db.Exec(promptTable); err != nil {
 		return err
 	}
@@ -232,12 +241,12 @@ func (d *Database) format(query string) string {
 }
 
 func (d *Database) GetGuildConfig(guildID string) (*GuildConfig, error) {
-	q := d.format("SELECT guild_id, api_key, provider, model, multi_message FROM guild_config WHERE guild_id = ?")
+	q := d.format("SELECT guild_id, api_key, provider, model, multi_message, channel_context_limit FROM guild_config WHERE guild_id = ?")
 	row := d.db.QueryRow(q, guildID)
 
 	cfg := &GuildConfig{}
 	var multiMessage int
-	if err := row.Scan(&cfg.GuildID, &cfg.APIKey, &cfg.Provider, &cfg.Model, &multiMessage); err == sql.ErrNoRows {
+	if err := row.Scan(&cfg.GuildID, &cfg.APIKey, &cfg.Provider, &cfg.Model, &multiMessage, &cfg.ChannelContextLimit); err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
@@ -371,6 +380,26 @@ func (d *Database) SetGuildSystemPrompt(guildID, prompt string) error {
 func (d *Database) ClearGuildSystemPrompt(guildID string) error {
 	q := d.format("DELETE FROM guild_prompt_config WHERE guild_id = ?")
 	_, err := d.db.Exec(q, guildID)
+	return err
+}
+
+// SetGuildChannelContextLimit persists a per-guild channel context message limit.
+// A value of 0 means "use the bot default". Valid configured range is 1–20.
+func (d *Database) SetGuildChannelContextLimit(guildID string, limit int) error {
+	var q string
+	switch d.driver {
+	case "mysql":
+		q = `INSERT INTO guild_config (guild_id, api_key, provider, model, channel_context_limit, updated_at)
+			 VALUES (?, '', '', '', ?, CURRENT_TIMESTAMP)
+			 ON DUPLICATE KEY UPDATE channel_context_limit = VALUES(channel_context_limit), updated_at = CURRENT_TIMESTAMP`
+	default:
+		q = d.format(`INSERT INTO guild_config (guild_id, api_key, provider, model, channel_context_limit, updated_at)
+			 VALUES (?, '', '', '', ?, CURRENT_TIMESTAMP)
+			 ON CONFLICT(guild_id) DO UPDATE SET
+				 channel_context_limit = excluded.channel_context_limit,
+				 updated_at = CURRENT_TIMESTAMP`)
+	}
+	_, err := d.db.Exec(q, guildID, limit)
 	return err
 }
 
