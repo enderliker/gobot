@@ -3,8 +3,6 @@ package slash
 import (
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
 	"unicode/utf8"
 
 	"gobot/internal/database"
@@ -15,6 +13,9 @@ import (
 )
 
 func init() {
+	minContextValue := 0.0
+	maxContextValue := 20.0
+
 	if err := registry.RegisterCommand(&registry.Command{
 		Module: "Configuration",
 		Data: &discordgo.ApplicationCommand{
@@ -22,23 +23,51 @@ func init() {
 			Description: "View or change server-level bot settings (owner only)",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "setting",
-					Description: "The setting to change",
-					Required:    true,
-					Choices: []*discordgo.ApplicationCommandOptionChoice{
-						{Name: "multi_message — split long responses across multiple messages", Value: "multi_message"},
-						{Name: "clearkey — delete the AI API key and settings for this server", Value: "clearkey"},
-						{Name: "setprompt — configure the server's GuildSystem prompt", Value: "setprompt"},
-						{Name: "getprompt — view or edit the server's GuildSystem prompt", Value: "getprompt"},
-						{Name: "channel_context — number of recent messages passed as context (0 = default 5, 1–20)", Value: "channel_context"},
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "multi_message",
+					Description: "Split long AI responses across multiple messages instead of clipping",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "value",
+							Description: "Enable or disable multi-message splitting",
+							Required:    true,
+							Choices: []*discordgo.ApplicationCommandOptionChoice{
+								{Name: "on", Value: "on"},
+								{Name: "off", Value: "off"},
+							},
+						},
 					},
 				},
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "value",
-					Description: "New value for the setting (on/off for multi_message; 0–20 for channel_context)",
-					Required:    false,
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "channel_context",
+					Description: "Number of recent channel messages passed as context to the AI",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Name:        "messages",
+							Description: "Number of messages (0 resets to default of 5; max 20)",
+							Required:    true,
+							MinValue:    &minContextValue,
+							MaxValue:    maxContextValue,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "clearkey",
+					Description: "Delete the AI API key and all settings for this server",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "setprompt",
+					Description: "Configure the server's custom system prompt for the AI",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "getprompt",
+					Description: "View or edit the server's current system prompt",
 				},
 			},
 		},
@@ -71,23 +100,17 @@ func executeConfig(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	opts := configOptionMap(i.ApplicationCommandData().Options)
-	setting := strings.ToLower(configOptionString(opts, "setting"))
-	value := strings.ToLower(configOptionString(opts, "value"))
+	// With subcommands, Options[0] is the chosen subcommand.
+	opts := i.ApplicationCommandData().Options
+	if len(opts) == 0 {
+		return
+	}
+	sub := opts[0]
+	subOpts := subCommandOptionMap(sub.Options)
 
-	switch setting {
+	switch sub.Name {
 	case "multi_message":
-		if value == "" {
-			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Embeds: []*discordgo.MessageEmbed{embeds.Error("Missing Value", "The 'multi_message' setting requires a value ('on' or 'off').")},
-					Flags:  discordgo.MessageFlagsEphemeral,
-				},
-			})
-			return
-		}
-
+		value := subCommandOptionString(subOpts, "value")
 		enabled := value == "on"
 		if err := database.Default.SetGuildMultiMessage(i.GuildID, enabled); err != nil {
 			log.Printf("[CONFIG] SetGuildMultiMessage %s: %v", i.GuildID, err)
@@ -109,11 +132,42 @@ func executeConfig(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			description = "Long AI responses will be **split across multiple messages** instead of being clipped."
 			color = 0x57F287
 		}
-
 		embed := &discordgo.MessageEmbed{
 			Title:       fmt.Sprintf("✅ Setting Updated: multi_message %s", stateStr),
 			Description: description,
 			Color:       color,
+		}
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Embeds: []*discordgo.MessageEmbed{embed},
+				Flags:  discordgo.MessageFlagsEphemeral,
+			},
+		})
+
+	case "channel_context":
+		limit := int(subCommandOptionInt(subOpts, "messages"))
+		if err := database.Default.SetGuildChannelContextLimit(i.GuildID, limit); err != nil {
+			log.Printf("[CONFIG] SetGuildChannelContextLimit %s: %v", i.GuildID, err)
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Embeds: []*discordgo.MessageEmbed{embeds.Error("Error", "Failed to save setting. Please try again.")},
+					Flags:  discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+		var description string
+		if limit == 0 {
+			description = "Channel context has been **reset to the default** (5 recent messages)."
+		} else {
+			description = fmt.Sprintf("The last **%d** messages in the channel will be passed as context to the AI.", limit)
+		}
+		embed := &discordgo.MessageEmbed{
+			Title:       fmt.Sprintf("✅ Setting Updated: channel_context = %d", limit),
+			Description: description,
+			Color:       0x57F287,
 		}
 		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -135,7 +189,6 @@ func executeConfig(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			})
 			return
 		}
-
 		embed := &discordgo.MessageEmbed{
 			Title:       "✅ API Key Cleared",
 			Description: "The AI API key and all settings for this server have been successfully deleted from the database.",
@@ -168,77 +221,15 @@ func executeConfig(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			})
 			return
 		}
-
 		auditInteraction(i, "config_prompt_viewed", "success", map[string]any{
 			"has_prompt":    prompt != "",
 			"prompt_length": utf8.RuneCountInString(prompt),
 		})
 		presentGuildPromptFlow(s, i, guildPromptSummaryView, prompt)
-
-	case "channel_context":
-		if value == "" {
-			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Embeds: []*discordgo.MessageEmbed{embeds.Error("Missing Value", "The 'channel_context' setting requires a numeric value between 0 and 20.\n`0` resets to the default (5 messages).")},
-					Flags:  discordgo.MessageFlagsEphemeral,
-				},
-			})
-			return
-		}
-		limit, parseErr := strconv.Atoi(value)
-		if parseErr != nil || limit < 0 || limit > 20 {
-			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Embeds: []*discordgo.MessageEmbed{embeds.Error("Invalid Value", "The 'channel_context' value must be a whole number between 0 and 20.")},
-					Flags:  discordgo.MessageFlagsEphemeral,
-				},
-			})
-			return
-		}
-		if err := database.Default.SetGuildChannelContextLimit(i.GuildID, limit); err != nil {
-			log.Printf("[CONFIG] SetGuildChannelContextLimit %s: %v", i.GuildID, err)
-			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Embeds: []*discordgo.MessageEmbed{embeds.Error("Error", "Failed to save setting. Please try again.")},
-					Flags:  discordgo.MessageFlagsEphemeral,
-				},
-			})
-			return
-		}
-		var description string
-		if limit == 0 {
-			description = "Channel context has been **reset to the default** (5 recent messages)."
-		} else {
-			description = fmt.Sprintf("The last **%d** messages in the channel will be passed as context to the AI.", limit)
-		}
-		embed := &discordgo.MessageEmbed{
-			Title:       fmt.Sprintf("✅ Setting Updated: channel_context = %d", limit),
-			Description: description,
-			Color:       0x57F287,
-		}
-		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Embeds: []*discordgo.MessageEmbed{embed},
-				Flags:  discordgo.MessageFlagsEphemeral,
-			},
-		})
-
-	default:
-		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Embeds: []*discordgo.MessageEmbed{embeds.Error("Unknown Setting", fmt.Sprintf("Unknown setting %q.", setting))},
-				Flags:  discordgo.MessageFlagsEphemeral,
-			},
-		})
 	}
 }
 
-func configOptionMap(opts []*discordgo.ApplicationCommandInteractionDataOption) map[string]*discordgo.ApplicationCommandInteractionDataOption {
+func subCommandOptionMap(opts []*discordgo.ApplicationCommandInteractionDataOption) map[string]*discordgo.ApplicationCommandInteractionDataOption {
 	m := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(opts))
 	for _, o := range opts {
 		m[o.Name] = o
@@ -246,9 +237,16 @@ func configOptionMap(opts []*discordgo.ApplicationCommandInteractionDataOption) 
 	return m
 }
 
-func configOptionString(opts map[string]*discordgo.ApplicationCommandInteractionDataOption, name string) string {
+func subCommandOptionString(opts map[string]*discordgo.ApplicationCommandInteractionDataOption, name string) string {
 	if o, ok := opts[name]; ok {
 		return o.StringValue()
 	}
 	return ""
+}
+
+func subCommandOptionInt(opts map[string]*discordgo.ApplicationCommandInteractionDataOption, name string) int64 {
+	if o, ok := opts[name]; ok {
+		return o.IntValue()
+	}
+	return 0
 }

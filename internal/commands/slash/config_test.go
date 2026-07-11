@@ -36,41 +36,42 @@ func newConfigTestSession(t *testing.T, ownerID string) (*discordgo.Session, str
 	return session, guildID
 }
 
-func TestConfigExecuteDeniedForNonOwner(t *testing.T) {
-	d := newSlashTestDatabase(t)
-	// seedOwnerOnlySession / newConfigTestSession returns guild-1
-	if err := d.SetGuildConfig("guild-1", "secret-key", "Capture", "model-1"); err != nil {
-		t.Fatalf("set config: %v", err)
-	}
-
-	session, guildID := newConfigTestSession(t, "owner-1")
-
-	// user-2 is not the owner (owner-1 is the owner)
-	interaction := &discordgo.InteractionCreate{
+// newConfigSubCommandInteraction builds an interaction for a /config <subcommand> call.
+func newConfigSubCommandInteraction(userID, guildID, subCommand string, subOpts []*discordgo.ApplicationCommandInteractionDataOption) *discordgo.InteractionCreate {
+	return &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
 			Type:    discordgo.InteractionApplicationCommand,
 			GuildID: guildID,
 			Member: &discordgo.Member{
-				User:  &discordgo.User{ID: "user-2"},
+				User:  &discordgo.User{ID: userID},
 				Roles: []string{"role-member"},
 			},
 			Data: discordgo.ApplicationCommandInteractionData{
 				Name: "config",
 				Options: []*discordgo.ApplicationCommandInteractionDataOption{
 					{
-						Name:  "setting",
-						Value: "multi_message",
-						Type:  discordgo.ApplicationCommandOptionString,
-					},
-					{
-						Name:  "value",
-						Value: "on",
-						Type:  discordgo.ApplicationCommandOptionString,
+						Name:    subCommand,
+						Type:    discordgo.ApplicationCommandOptionSubCommand,
+						Options: subOpts,
 					},
 				},
 			},
 		},
 	}
+}
+
+func TestConfigExecuteDeniedForNonOwner(t *testing.T) {
+	d := newSlashTestDatabase(t)
+	if err := d.SetGuildConfig("guild-1", "secret-key", "Capture", "model-1"); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	session, guildID := newConfigTestSession(t, "owner-1")
+
+	// user-2 is NOT the owner
+	interaction := newConfigSubCommandInteraction("user-2", guildID, "multi_message", []*discordgo.ApplicationCommandInteractionDataOption{
+		{Name: "value", Value: "on", Type: discordgo.ApplicationCommandOptionString},
+	})
 
 	recorder := &discordRequestRecorder{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,16 +100,13 @@ func TestConfigExecuteDeniedForNonOwner(t *testing.T) {
 	if response.Type != discordgo.InteractionResponseChannelMessageWithSource {
 		t.Fatalf("expected message response, got %d", response.Type)
 	}
-
 	if (response.Data.Flags & discordgo.MessageFlagsEphemeral) == 0 {
 		t.Fatal("expected ephemeral response")
 	}
-
 	if len(response.Data.Embeds) != 1 || !strings.Contains(response.Data.Embeds[0].Title, "Access Denied") {
 		t.Fatalf("expected Access Denied embed, got %#v", response.Data.Embeds)
 	}
 
-	// Verify DB didn't change
 	cfg, err := database.Default.GetGuildConfig(guildID)
 	if err != nil {
 		t.Fatalf("get config: %v", err)
@@ -126,32 +124,10 @@ func TestConfigExecuteAllowedForOwner(t *testing.T) {
 
 	session, guildID := newConfigTestSession(t, "owner-1")
 
-	// owner-1 is the owner
-	interaction := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			Type:    discordgo.InteractionApplicationCommand,
-			GuildID: guildID,
-			Member: &discordgo.Member{
-				User:  &discordgo.User{ID: "owner-1"},
-				Roles: []string{"role-member"},
-			},
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name: "config",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{
-					{
-						Name:  "setting",
-						Value: "multi_message",
-						Type:  discordgo.ApplicationCommandOptionString,
-					},
-					{
-						Name:  "value",
-						Value: "on",
-						Type:  discordgo.ApplicationCommandOptionString,
-					},
-				},
-			},
-		},
-	}
+	// Enable multi_message
+	interaction := newConfigSubCommandInteraction("owner-1", guildID, "multi_message", []*discordgo.ApplicationCommandInteractionDataOption{
+		{Name: "value", Value: "on", Type: discordgo.ApplicationCommandOptionString},
+	})
 
 	recorder := &discordRequestRecorder{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -187,16 +163,13 @@ func TestConfigExecuteAllowedForOwner(t *testing.T) {
 	if response.Type != discordgo.InteractionResponseChannelMessageWithSource {
 		t.Fatalf("expected message response, got %d", response.Type)
 	}
-
 	if (response.Data.Flags & discordgo.MessageFlagsEphemeral) == 0 {
 		t.Fatal("expected ephemeral response")
 	}
-
 	if len(response.Data.Embeds) != 1 || !strings.Contains(response.Data.Embeds[0].Title, "Setting Updated") {
 		t.Fatalf("expected Setting Updated embed, got %#v", response.Data.Embeds)
 	}
 
-	// Verify DB changed
 	cfg, err := database.Default.GetGuildConfig(guildID)
 	if err != nil {
 		t.Fatalf("get config: %v", err)
@@ -208,19 +181,16 @@ func TestConfigExecuteAllowedForOwner(t *testing.T) {
 		t.Fatal("expected multi_message to be true in DB")
 	}
 
-	// Now toggle off
+	// Toggle off
 	interaction.Interaction.Data = discordgo.ApplicationCommandInteractionData{
 		Name: "config",
 		Options: []*discordgo.ApplicationCommandInteractionDataOption{
 			{
-				Name:  "setting",
-				Value: "multi_message",
-				Type:  discordgo.ApplicationCommandOptionString,
-			},
-			{
-				Name:  "value",
-				Value: "off",
-				Type:  discordgo.ApplicationCommandOptionString,
+				Name: "multi_message",
+				Type: discordgo.ApplicationCommandOptionSubCommand,
+				Options: []*discordgo.ApplicationCommandInteractionDataOption{
+					{Name: "value", Value: "off", Type: discordgo.ApplicationCommandOptionString},
+				},
 			},
 		},
 	}
@@ -253,27 +223,7 @@ func TestConfigExecuteClearKey(t *testing.T) {
 
 	session, guildID := newConfigTestSession(t, "owner-1")
 
-	// owner-1 runs /config setting:clearkey
-	interaction := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			Type:    discordgo.InteractionApplicationCommand,
-			GuildID: guildID,
-			Member: &discordgo.Member{
-				User:  &discordgo.User{ID: "owner-1"},
-				Roles: []string{"role-member"},
-			},
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name: "config",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{
-					{
-						Name:  "setting",
-						Value: "clearkey",
-						Type:  discordgo.ApplicationCommandOptionString,
-					},
-				},
-			},
-		},
-	}
+	interaction := newConfigSubCommandInteraction("owner-1", guildID, "clearkey", nil)
 
 	recorder := &discordRequestRecorder{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -302,12 +252,10 @@ func TestConfigExecuteClearKey(t *testing.T) {
 	if response.Type != discordgo.InteractionResponseChannelMessageWithSource {
 		t.Fatalf("expected message response, got %d", response.Type)
 	}
-
 	if len(response.Data.Embeds) != 1 || !strings.Contains(response.Data.Embeds[0].Title, "API Key Cleared") {
 		t.Fatalf("expected API Key Cleared embed, got %#v", response.Data.Embeds)
 	}
 
-	// Verify DB is cleared
 	cfg, err := database.Default.GetGuildConfig(guildID)
 	if err != nil {
 		t.Fatalf("get config after clear: %v", err)
@@ -317,3 +265,57 @@ func TestConfigExecuteClearKey(t *testing.T) {
 	}
 }
 
+func TestConfigExecuteChannelContext(t *testing.T) {
+	d := newSlashTestDatabase(t)
+	if err := d.SetGuildConfig("guild-1", "secret-key", "Capture", "model-1"); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	session, guildID := newConfigTestSession(t, "owner-1")
+
+	interaction := newConfigSubCommandInteraction("owner-1", guildID, "channel_context", []*discordgo.ApplicationCommandInteractionDataOption{
+		{Name: "messages", Value: float64(10), Type: discordgo.ApplicationCommandOptionInteger},
+	})
+
+	recorder := &discordRequestRecorder{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.add(t, r)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	session.Client = server.Client()
+	restoreEndpoints := stubDiscordEndpoints(t, server.URL+"/")
+	defer restoreEndpoints()
+
+	cmd := registeredSlashCommand(t, "config")
+	cmd.Execute(session, interaction)
+
+	recorder.waitForCount(t, 1)
+
+	requests := recorder.snapshot()
+	callback := findDiscordRequest(t, requests, http.MethodPost, "/callback")
+
+	var response discordgo.InteractionResponse
+	if err := json.Unmarshal(callback.Body, &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if response.Type != discordgo.InteractionResponseChannelMessageWithSource {
+		t.Fatalf("expected message response, got %d", response.Type)
+	}
+	if len(response.Data.Embeds) != 1 || !strings.Contains(response.Data.Embeds[0].Title, "channel_context = 10") {
+		t.Fatalf("expected channel_context embed, got %#v", response.Data.Embeds)
+	}
+
+	cfg, err := database.Default.GetGuildConfig(guildID)
+	if err != nil {
+		t.Fatalf("get config: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected guild config to exist")
+	}
+	if cfg.ChannelContextLimit != 10 {
+		t.Fatalf("expected ChannelContextLimit 10, got %d", cfg.ChannelContextLimit)
+	}
+}
