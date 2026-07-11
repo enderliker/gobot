@@ -110,6 +110,35 @@ func TestSetGuildConfigEncryptsAtRest(t *testing.T) {
 	}
 }
 
+func TestDeleteGuildConfig(t *testing.T) {
+	d := newTestDatabase(t)
+
+	if err := d.SetGuildConfig("guild-1", "secret-api-key", "OpenAI", "gpt-4o"); err != nil {
+		t.Fatalf("set guild config: %v", err)
+	}
+
+	cfg, err := d.GetGuildConfig("guild-1")
+	if err != nil {
+		t.Fatalf("get guild config: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected guild config to exist")
+	}
+
+	if err := d.DeleteGuildConfig("guild-1"); err != nil {
+		t.Fatalf("delete guild config: %v", err)
+	}
+
+	cfg, err = d.GetGuildConfig("guild-1")
+	if err != nil {
+		t.Fatalf("get guild config after delete: %v", err)
+	}
+	if cfg != nil {
+		t.Fatal("expected guild config to be nil after deletion")
+	}
+}
+
+
 func TestMigratePlaintextAPIKeys(t *testing.T) {
 	d := newTestDatabase(t)
 

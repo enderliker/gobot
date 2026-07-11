@@ -26,13 +26,14 @@ func init() {
 					Required:    true,
 					Choices: []*discordgo.ApplicationCommandOptionChoice{
 						{Name: "multi_message — split long responses across multiple messages", Value: "multi_message"},
+						{Name: "clearkey — delete the AI API key and settings for this server", Value: "clearkey"},
 					},
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "value",
-					Description: "New value for the setting",
-					Required:    true,
+					Description: "New value for the setting (not required for clearkey)",
+					Required:    false,
 					Choices: []*discordgo.ApplicationCommandOptionChoice{
 						{Name: "on", Value: "on"},
 						{Name: "off", Value: "off"},
@@ -62,7 +63,7 @@ func executeConfig(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Embeds: []*discordgo.MessageEmbed{embeds.Error("Not Configured", "No API key has been set for this server. Use /setkey first.")},
+				Embeds: []*discordgo.MessageEmbed{embeds.Error("Not Configured", "No database connection is active.")},
 				Flags:  discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -75,6 +76,17 @@ func executeConfig(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	switch setting {
 	case "multi_message":
+		if value == "" {
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Embeds: []*discordgo.MessageEmbed{embeds.Error("Missing Value", "The 'multi_message' setting requires a value ('on' or 'off').")},
+					Flags:  discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
 		enabled := value == "on"
 		if err := database.Default.SetGuildMultiMessage(i.GuildID, enabled); err != nil {
 			log.Printf("[CONFIG] SetGuildMultiMessage %s: %v", i.GuildID, err)
@@ -101,6 +113,32 @@ func executeConfig(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			Title:       fmt.Sprintf("✅ Setting Updated: multi_message %s", stateStr),
 			Description: description,
 			Color:       color,
+		}
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Embeds: []*discordgo.MessageEmbed{embed},
+				Flags:  discordgo.MessageFlagsEphemeral,
+			},
+		})
+
+	case "clearkey":
+		if err := database.Default.DeleteGuildConfig(i.GuildID); err != nil {
+			log.Printf("[CONFIG] DeleteGuildConfig %s: %v", i.GuildID, err)
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Embeds: []*discordgo.MessageEmbed{embeds.Error("Error", "Failed to delete server configuration. Please try again.")},
+					Flags:  discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
+		embed := &discordgo.MessageEmbed{
+			Title:       "✅ API Key Cleared",
+			Description: "The AI API key and all settings for this server have been successfully deleted from the database.",
+			Color:       0x57F287,
 		}
 		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,

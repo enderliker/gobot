@@ -244,3 +244,76 @@ func (r *discordRequestRecorder) clear() {
 	defer r.mu.Unlock()
 	r.requests = nil
 }
+
+func TestConfigExecuteClearKey(t *testing.T) {
+	d := newSlashTestDatabase(t)
+	if err := d.SetGuildConfig("guild-1", "secret-key", "Capture", "model-1"); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+
+	session, guildID := newConfigTestSession(t, "owner-1")
+
+	// owner-1 runs /config setting:clearkey
+	interaction := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			Type:    discordgo.InteractionApplicationCommand,
+			GuildID: guildID,
+			Member: &discordgo.Member{
+				User:  &discordgo.User{ID: "owner-1"},
+				Roles: []string{"role-member"},
+			},
+			Data: discordgo.ApplicationCommandInteractionData{
+				Name: "config",
+				Options: []*discordgo.ApplicationCommandInteractionDataOption{
+					{
+						Name:  "setting",
+						Value: "clearkey",
+						Type:  discordgo.ApplicationCommandOptionString,
+					},
+				},
+			},
+		},
+	}
+
+	recorder := &discordRequestRecorder{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.add(t, r)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	session.Client = server.Client()
+	restoreEndpoints := stubDiscordEndpoints(t, server.URL+"/")
+	defer restoreEndpoints()
+
+	cmd := registeredSlashCommand(t, "config")
+	cmd.Execute(session, interaction)
+
+	recorder.waitForCount(t, 1)
+
+	requests := recorder.snapshot()
+	callback := findDiscordRequest(t, requests, http.MethodPost, "/callback")
+
+	var response discordgo.InteractionResponse
+	if err := json.Unmarshal(callback.Body, &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if response.Type != discordgo.InteractionResponseChannelMessageWithSource {
+		t.Fatalf("expected message response, got %d", response.Type)
+	}
+
+	if len(response.Data.Embeds) != 1 || !strings.Contains(response.Data.Embeds[0].Title, "API Key Cleared") {
+		t.Fatalf("expected API Key Cleared embed, got %#v", response.Data.Embeds)
+	}
+
+	// Verify DB is cleared
+	cfg, err := database.Default.GetGuildConfig(guildID)
+	if err != nil {
+		t.Fatalf("get config after clear: %v", err)
+	}
+	if cfg != nil {
+		t.Fatal("expected guild config to be deleted from DB")
+	}
+}
+

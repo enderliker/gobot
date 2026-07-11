@@ -282,6 +282,13 @@ func (d *Database) SetGuildConfig(guildID, apiKey, provider, model string) error
 	return err
 }
 
+func (d *Database) DeleteGuildConfig(guildID string) error {
+	q := d.format("DELETE FROM guild_config WHERE guild_id = ?")
+	_, err := d.db.Exec(q, guildID)
+	return err
+}
+
+
 func (d *Database) SetGuildMultiMessage(guildID string, enabled bool) error {
 	val := 0
 	if enabled {
