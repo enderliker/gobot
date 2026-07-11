@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode/utf8"
 
 	"gobot/internal/database"
 	"gobot/internal/embeds"
@@ -27,6 +28,8 @@ func init() {
 					Choices: []*discordgo.ApplicationCommandOptionChoice{
 						{Name: "multi_message — split long responses across multiple messages", Value: "multi_message"},
 						{Name: "clearkey — delete the AI API key and settings for this server", Value: "clearkey"},
+						{Name: "setprompt — configure the server's GuildSystem prompt", Value: "setprompt"},
+						{Name: "getprompt — view or edit the server's GuildSystem prompt", Value: "getprompt"},
 					},
 				},
 				{
@@ -147,6 +150,32 @@ func executeConfig(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				Flags:  discordgo.MessageFlagsEphemeral,
 			},
 		})
+
+	case "setprompt":
+		presentGuildPromptFlow(s, i, guildPromptSetupView, "")
+
+	case "getprompt":
+		prompt, err := database.Default.GetGuildSystemPrompt(i.GuildID)
+		if err != nil {
+			log.Printf("[PROMPT] read from config: %v", err)
+			auditInteraction(i, "config_prompt_viewed", "error", map[string]any{
+				"reason": "database_read_failed",
+			})
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Embeds: []*discordgo.MessageEmbed{embeds.Error("Database Error", "Failed to load the guild system prompt. Please try again.")},
+					Flags:  discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
+		auditInteraction(i, "config_prompt_viewed", "success", map[string]any{
+			"has_prompt":    prompt != "",
+			"prompt_length": utf8.RuneCountInString(prompt),
+		})
+		presentGuildPromptFlow(s, i, guildPromptSummaryView, prompt)
 
 	default:
 		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{

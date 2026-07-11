@@ -14,7 +14,6 @@ import (
 	"gobot/internal/database"
 	"gobot/internal/embeds"
 	"gobot/internal/lifecycle"
-	"gobot/internal/registry"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -33,72 +32,7 @@ const (
 	guildPromptSummaryView
 )
 
-func init() {
-	if err := registry.RegisterCommand(&registry.Command{
-		Module: "AI",
-		Data: &discordgo.ApplicationCommand{
-			Name:                     "setprompt",
-			Description:              "Configure the server's GuildSystem prompt (server owner only)",
-			DefaultMemberPermissions: int64Ptr(discordgo.PermissionManageServer),
-		},
-		Execute: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-			if i.GuildID == "" {
-				respond(s, i, embeds.Error("Server Only", "This command can only be used in a server."))
-				return
-			}
-			if !isGuildOwner(s, i.GuildID, i.Member) {
-				auditInteraction(i, "config_prompt_set", "denied", map[string]any{
-					"reason": "not_guild_owner",
-				})
-				respond(s, i, embeds.Error("Owner Only", "Only the server owner can configure the guild system prompt."))
-				return
-			}
-			presentGuildPromptFlow(s, i, guildPromptSetupView, "")
-		},
-	}); err != nil {
-		panic(err)
-	}
 
-	if err := registry.RegisterCommand(&registry.Command{
-		Module: "AI",
-		Data: &discordgo.ApplicationCommand{
-			Name:                     "getprompt",
-			Description:              "View or edit the server's GuildSystem prompt (server owner only)",
-			DefaultMemberPermissions: int64Ptr(discordgo.PermissionManageServer),
-		},
-		Execute: func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-			if i.GuildID == "" {
-				respond(s, i, embeds.Error("Server Only", "This command can only be used in a server."))
-				return
-			}
-			if !isGuildOwner(s, i.GuildID, i.Member) {
-				auditInteraction(i, "config_prompt_viewed", "denied", map[string]any{
-					"reason": "not_guild_owner",
-				})
-				respond(s, i, embeds.Error("Owner Only", "Only the server owner can view the guild system prompt."))
-				return
-			}
-
-			prompt, err := database.Default.GetGuildSystemPrompt(i.GuildID)
-			if err != nil {
-				log.Printf("[PROMPT] read: %v", err)
-				auditInteraction(i, "config_prompt_viewed", "error", map[string]any{
-					"reason": "database_read_failed",
-				})
-				respond(s, i, embeds.Error("Database Error", "Failed to load the guild system prompt. Please try again."))
-				return
-			}
-
-			auditInteraction(i, "config_prompt_viewed", "success", map[string]any{
-				"has_prompt":    prompt != "",
-				"prompt_length": utf8.RuneCountInString(prompt),
-			})
-			presentGuildPromptFlow(s, i, guildPromptSummaryView, prompt)
-		},
-	}); err != nil {
-		panic(err)
-	}
-}
 
 func presentGuildPromptFlow(s *discordgo.Session, i *discordgo.InteractionCreate, mode guildPromptViewMode, initialPrompt string) {
 	flowID := strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -305,7 +239,7 @@ func presentGuildPromptFlow(s *discordgo.Session, i *discordgo.InteractionCreate
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
 						Embeds: []*discordgo.MessageEmbed{
-							embeds.Error("Configuration Expired", "This prompt configuration session expired. Run `/setprompt` or `/getprompt` again."),
+							embeds.Error("Configuration Expired", "This prompt configuration session expired. Run `/config` again."),
 						},
 						Flags: discordgo.MessageFlagsEphemeral,
 					},
@@ -508,7 +442,7 @@ func respondExpiredPromptComponent(s *discordgo.Session, i *discordgo.Interactio
 		Type: discordgo.InteractionResponseUpdateMessage,
 		Data: &discordgo.InteractionResponseData{
 			Embeds: []*discordgo.MessageEmbed{
-				embeds.Error("Configuration Expired", "This prompt configuration session expired. Run `/setprompt` or `/getprompt` again."),
+				embeds.Error("Configuration Expired", "This prompt configuration session expired. Run `/config` again."),
 			},
 			Components: []discordgo.MessageComponent{},
 		},
