@@ -49,31 +49,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 3. Live Stats Fetch & Graceful Degradation
-    const statsSection = document.getElementById("liveStatsSection");
-    const serverCountSpan = document.getElementById("serverCount");
 
-    if (statsSection && serverCountSpan) {
-        fetch("/api/stats")
-            .then(res => {
-                if (!res.ok) {
-                    throw new Error("Stats service offline or failed");
-                }
-                return res.json();
-            })
-            .then(data => {
-                if (data.servers && data.servers > 0) {
-                    serverCountSpan.textContent = data.servers;
-                    statsSection.classList.remove("hidden");
-                } else {
-                    statsSection.classList.add("hidden");
-                }
-            })
-            .catch(() => {
-                // If API fails, section remains hidden as per specification
-                statsSection.classList.add("hidden");
-            });
-    }
 
     // 4. Scroll Reveal (prefers-reduced-motion aware)
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;

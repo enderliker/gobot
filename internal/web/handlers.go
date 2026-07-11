@@ -21,8 +21,13 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	servers := GetLiveStats()
+	data := map[string]any{
+		"Servers": servers,
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := RenderTemplate(w, "home.html", nil); err != nil {
+	if err := RenderTemplate(w, "home.html", data); err != nil {
 		InternalError(w)
 	}
 }
