@@ -43,7 +43,13 @@
                     <span class="cmd-name">/config</span>
                     <span class="cmd-perm">SERVER OWNER ONLY</span>
                 </div>
-                <p class="cmd-desc">Configures server settings. Currently supports toggling <code>multi_message</code> mode (on/off) to split long AI responses across multiple sequential messages.</p>
+                <p class="cmd-desc">Configures server-level settings. Supports the following options:</p>
+                <ul class="cmd-options-list" style="margin-left: 20px; margin-bottom: 15px; color: var(--text-muted); font-size: 0.95rem; line-height: 1.6;">
+                    <li><strong>multi_message</strong>: toggles (<code>on</code>/<code>off</code>) whether to split long AI responses across multiple messages.</li>
+                    <li><strong>clearkey</strong>: deletes the AI API key and all configuration files for this server.</li>
+                    <li><strong>setprompt</strong>: starts an interactive flow to configure the server's custom system prompt instructions.</li>
+                    <li><strong>getprompt</strong>: views, edits, or deletes the server's current system prompt instructions.</li>
+                </ul>
             </div>
 
             <div class="command-card">
