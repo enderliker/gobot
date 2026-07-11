@@ -41,6 +41,7 @@ services:
       - "8081:8081"
     environment:
       - WEB_PORT=8081
+      - WEB_BIND=${WEB_BIND}
       - WEB_DISCORD_INVITE_URL=${WEB_DISCORD_INVITE_URL}
       - DB_DRIVER=${DB_DRIVER}
       - DB_DSN=${DB_DSN}
