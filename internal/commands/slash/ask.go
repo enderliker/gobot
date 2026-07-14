@@ -156,46 +156,102 @@ func init() {
 						return
 					}
 
-					if call := structuredToolCallFromAskResult(result); call != nil {
-						if call.Tool == "web_search" {
-							answer, err := executeWebSearchAndSynthesize(ctx, provider, cfg, call.Query, reqPrompt)
-							if err != nil {
-								if ctx.Err() != nil || lifecycle.IsShuttingDown() {
+					if len(result.ToolCalls) > 0 {
+						var readCalls []*ai.ToolCall
+						var writeCalls []*ai.ToolCall
+						for _, call := range result.ToolCalls {
+							if IsReadTool(call.Tool) {
+								readCalls = append(readCalls, call)
+							} else {
+								writeCalls = append(writeCalls, call)
+							}
+						}
+
+						if len(readCalls) > 0 && len(writeCalls) == 0 {
+							var webSearchCall *ai.ToolCall
+							for _, rc := range readCalls {
+								if rc.Tool == "web_search" {
+									webSearchCall = rc
+									break
+								}
+							}
+
+							if webSearchCall != nil {
+								answer, err := executeWebSearchAndSynthesize(ctx, provider, cfg, webSearchCall.Query, reqPrompt)
+								if err != nil {
+									if ctx.Err() != nil || lifecycle.IsShuttingDown() {
+										return
+									}
+									if !ai.IsUserFacingError(err) {
+										log.Printf("[ASK] web_search synthesize %s: %v", cfg.Provider, err)
+									}
+									embed = embeds.Error("Web Search Error", ai.UserFacingError(err))
+									_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+										Embeds:          &[]*discordgo.MessageEmbed{embed},
+										Components:      &[]discordgo.MessageComponent{},
+										AllowedMentions: allowedMentionsForActor(i),
+									})
 									return
 								}
-								if !ai.IsUserFacingError(err) {
-									log.Printf("[ASK] web_search synthesize %s: %v", cfg.Provider, err)
+								answer = sanitizeAssistantVisibleText(answer, reqPrompt)
+								if err := sendAskResponse(ctx, s, i, cfg, answer); err != nil {
+									log.Printf("[ASK] web_search response send failed: %v", err)
 								}
-								embed = embeds.Error("Web Search Error", ai.UserFacingError(err))
+								return
+							}
+
+							var embedsToSend []*discordgo.MessageEmbed
+							for _, rc := range readCalls {
+								embed, err := ExecuteReadTool(ctx, s, i.GuildID, i.ChannelID, rc)
+								if err != nil {
+									embedsToSend = append(embedsToSend, embeds.Error(fmt.Sprintf("Tool Error (%s)", rc.Tool), err.Error()))
+								} else if embed != nil {
+									embedsToSend = append(embedsToSend, embed)
+								}
+							}
+
+							if len(embedsToSend) > 0 {
+								combined := consolidateReadEmbeds(embedsToSend)
+								_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+									Embeds:          &[]*discordgo.MessageEmbed{combined},
+									Components:      &[]discordgo.MessageComponent{},
+									AllowedMentions: allowedMentionsForActor(i),
+								})
+							}
+							return
+						}
+
+						if len(writeCalls) == 1 {
+							call := writeCalls[0]
+							auditInteraction(i, "tool_call_proposed", "success", toolAuditFields(auditViewFromToolCall(call.Tool, call.User, "", call.Reason)))
+							if err := presentToolConfirmation(ctx, s, i, call); err != nil {
+								log.Printf("[ASK] tool confirmation: %v", err)
+								embed = toolExecutionErrorEmbed(err)
 								_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
 									Embeds:          &[]*discordgo.MessageEmbed{embed},
 									Components:      &[]discordgo.MessageComponent{},
 									AllowedMentions: allowedMentionsForActor(i),
 								})
-								return
-							}
-							answer = sanitizeAssistantVisibleText(answer, reqPrompt)
-							if err := sendAskResponse(ctx, s, i, cfg, answer); err != nil {
-								log.Printf("[ASK] web_search response send failed: %v", err)
 							}
 							return
 						}
-						if handleDirectReadTool(ctx, s, i, call) {
+
+						if len(writeCalls) > 1 {
+							auditInteraction(i, "multi_tool_call_proposed", "success", map[string]any{
+								"count": len(writeCalls),
+							})
+
+							if err := presentMultiToolConfirmation(ctx, s, i, writeCalls); err != nil {
+								log.Printf("[ASK] multi-tool confirmation failed: %v", err)
+								embed = toolExecutionErrorEmbed(err)
+								_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+									Embeds:          &[]*discordgo.MessageEmbed{embed},
+									Components:      &[]discordgo.MessageComponent{},
+									AllowedMentions: allowedMentionsForActor(i),
+								})
+							}
 							return
 						}
-						auditInteraction(i, "tool_call_proposed", "success", toolAuditFields(auditViewFromToolCall(call.Tool, call.User, "", call.Reason)))
-						if err := presentToolConfirmation(ctx, s, i, call); err != nil {
-							log.Printf("[ASK] tool confirmation: %v", err)
-							embed = toolExecutionErrorEmbed(err)
-							if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
-								Embeds:          &[]*discordgo.MessageEmbed{embed},
-								Components:      &[]discordgo.MessageComponent{},
-								AllowedMentions: allowedMentionsForActor(i),
-							}); err != nil {
-								log.Printf("[ASK] original response edit failed after retries: %v", err)
-							}
-						}
-						return
 					}
 
 					answer := sanitizeAssistantVisibleText(result.Text, reqPrompt)
@@ -387,10 +443,10 @@ func askToolsForActor(s *discordgo.Session, i *discordgo.InteractionCreate) []ai
 }
 
 func structuredToolCallFromAskResult(result *ai.AskResult) *ai.ToolCall {
-	if result == nil {
+	if result == nil || len(result.ToolCalls) == 0 {
 		return nil
 	}
-	return result.ToolCall
+	return result.ToolCalls[0]
 }
 
 func toolRequiresMemberResolution(tool string) bool {
@@ -1010,98 +1066,7 @@ func sanitizeChoiceText(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func handleDirectReadTool(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
-	if call.Tool != "member_info" {
-		return handleReadTool(ctx, s, i, call)
-	}
 
-	candidates, err := ai.ResolveMembers(ctx, s, i.GuildID, call.User)
-	if err != nil || len(candidates) == 0 {
-		embed := embeds.Error("Member Not Found", fmt.Sprintf("No members matched %q", call.User))
-		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
-			Embeds: &[]*discordgo.MessageEmbed{embed},
-		})
-		return true
-	}
-
-	candidate := candidates[0]
-	if candidate.Member == nil || candidate.Member.User == nil {
-		embed := embeds.Error("Member Not Found", "Failed to resolve member details.")
-		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
-			Embeds: &[]*discordgo.MessageEmbed{embed},
-		})
-		return true
-	}
-
-	m := candidate.Member
-	u := m.User
-
-	rolesDesc := "No roles"
-	if len(m.Roles) > 0 {
-		roleMentions := make([]string, len(m.Roles))
-		for idx, rID := range m.Roles {
-			roleMentions[idx] = "<@&" + rID + ">"
-		}
-		rolesDesc = strings.Join(roleMentions, ", ")
-	}
-
-	joinedAt := "Unknown"
-	if !m.JoinedAt.IsZero() {
-		joinedAt = fmt.Sprintf("<t:%d:F> (<t:%d:R>)", m.JoinedAt.Unix(), m.JoinedAt.Unix())
-	}
-
-	createdAtTime, err := discordgo.SnowflakeTimestamp(u.ID)
-	createdAt := "Unknown"
-	if err == nil {
-		createdAt = fmt.Sprintf("<t:%d:F> (<t:%d:R>)", createdAtTime.Unix(), createdAtTime.Unix())
-	}
-
-	embed := &discordgo.MessageEmbed{
-		Title:       "Member Information",
-		Description: fmt.Sprintf("Information for %s", m.Mention()),
-		Color:       0x5865F2,
-		Thumbnail: &discordgo.MessageEmbedThumbnail{
-			URL: u.AvatarURL("256"),
-		},
-		Fields: []*discordgo.MessageEmbedField{
-			{
-				Name:   "Username",
-				Value:  fmt.Sprintf("%s (%s)", u.Username, u.ID),
-				Inline: true,
-			},
-			{
-				Name:   "Nickname / Display Name",
-				Value:  m.DisplayName(),
-				Inline: true,
-			},
-			{
-				Name:   "Is Bot?",
-				Value:  strconv.FormatBool(u.Bot),
-				Inline: true,
-			},
-			{
-				Name:   "Joined Server At",
-				Value:  joinedAt,
-				Inline: false,
-			},
-			{
-				Name:   "Account Created At",
-				Value:  createdAt,
-				Inline: false,
-			},
-			{
-				Name:   "Roles",
-				Value:  rolesDesc,
-				Inline: false,
-			},
-		},
-	}
-
-	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
-		Embeds: &[]*discordgo.MessageEmbed{embed},
-	})
-	return true
-}
 
 func executeWebSearchAndSynthesize(ctx context.Context, provider ai.Provider, cfg *database.GuildConfig, query string, basePrompt ai.PromptEnvelope) (string, error) {
 	results, err := ai.CallTavilySearch(ctx, query)
@@ -1140,4 +1105,537 @@ func executeWebSearchAndSynthesize(ctx context.Context, provider ai.Provider, cf
 		return "", err
 	}
 	return result.Text, nil
+}
+
+func consolidateReadEmbeds(embeds []*discordgo.MessageEmbed) *discordgo.MessageEmbed {
+	if len(embeds) == 0 {
+		return nil
+	}
+	if len(embeds) == 1 {
+		return embeds[0]
+	}
+
+	combined := &discordgo.MessageEmbed{
+		Title: "AI Query Results",
+		Color: 0x5865F2, // Blurple
+	}
+
+	var descriptions []string
+	for _, emb := range embeds {
+		if emb.Description != "" {
+			descriptions = append(descriptions, fmt.Sprintf("**%s**\n%s", emb.Title, emb.Description))
+		}
+		for _, f := range emb.Fields {
+			combined.Fields = append(combined.Fields, &discordgo.MessageEmbedField{
+				Name:   fmt.Sprintf("[%s] %s", emb.Title, f.Name),
+				Value:  f.Value,
+				Inline: f.Inline,
+			})
+		}
+	}
+
+	if len(descriptions) > 0 {
+		combined.Description = strings.Join(descriptions, "\n\n")
+	}
+
+	if len(combined.Fields) > 25 {
+		combined.Fields = combined.Fields[:25]
+	}
+
+	return combined
+}
+
+func multiConfirmationEmbed(calls []*ai.ToolCall, executed []bool, outcomes []string) *discordgo.MessageEmbed {
+	var sb strings.Builder
+	sb.WriteString("The AI proposes the following actions:\n\n")
+	for idx, call := range calls {
+		desc := call.Confirmation
+		if desc == "" {
+			desc = fmt.Sprintf("**%s** on %s (Reason: `%s`)", strings.Title(call.Tool), call.User, call.Reason)
+		}
+
+		status := "⏳ **PENDING**"
+		if executed[idx] {
+			if outcomes[idx] != "" {
+				status = fmt.Sprintf("❌ **FAILED**: %s", outcomes[idx])
+			} else {
+				status = "✅ **EXECUTED**"
+			}
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s — %s\n", idx+1, desc, status))
+	}
+
+	return &discordgo.MessageEmbed{
+		Title:       "AI Moderation Proposal",
+		Description: sb.String(),
+		Color:       0xFEE75C, // Yellow
+	}
+}
+
+func multiConfirmationComponents(calls []*ai.ToolCall, executed []bool, acceptID, rejectID, btnPrefix string) []discordgo.MessageComponent {
+	hasUnexecuted := false
+	for _, exec := range executed {
+		if !exec {
+			hasUnexecuted = true
+			break
+		}
+	}
+
+	if !hasUnexecuted {
+		return []discordgo.MessageComponent{}
+	}
+
+	var rows []discordgo.ActionsRow
+
+	row1 := discordgo.ActionsRow{
+		Components: []discordgo.MessageComponent{
+			discordgo.Button{
+				Label:    "Accept All",
+				Style:    discordgo.SuccessButton,
+				CustomID: acceptID,
+			},
+			discordgo.Button{
+				Label:    "Reject All",
+				Style:    discordgo.DangerButton,
+				CustomID: rejectID,
+			},
+		},
+	}
+	rows = append(rows, row1)
+
+	var numButtons []discordgo.MessageComponent
+	for idx := range calls {
+		if !executed[idx] {
+			numButtons = append(numButtons, discordgo.Button{
+				Label:    strconv.Itoa(idx + 1),
+				Style:    discordgo.SecondaryButton,
+				CustomID: fmt.Sprintf("%s%d", btnPrefix, idx),
+			})
+		}
+	}
+
+	for i := 0; i < len(numButtons); i += 5 {
+		end := i + 5
+		if end > len(numButtons) {
+			end = len(numButtons)
+		}
+		rows = append(rows, discordgo.ActionsRow{
+			Components: numButtons[i:end],
+		})
+	}
+
+	var components []discordgo.MessageComponent
+	for _, row := range rows {
+		components = append(components, row)
+	}
+
+	return components
+}
+
+func presentMultiToolConfirmation(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, calls []*ai.ToolCall) error {
+	flowID := strconv.FormatInt(time.Now().UnixNano(), 10)
+	actorID := interactionUserID(i)
+
+	confirmAllID := "ai_multi_accept_" + flowID
+	rejectAllID := "ai_multi_reject_" + flowID
+	numBtnPrefix := "ai_multi_btn_" + flowID + "_"
+	selectPrefix := "ai_multi_select_" + flowID + "_"
+	pagePrefix := "ai_multi_page_" + flowID + "_"
+
+	type unresolvedCall struct {
+		index      int
+		call       *ai.ToolCall
+		candidates []ai.MemberCandidate
+	}
+
+	var unresolved []*unresolvedCall
+	for idx, call := range calls {
+		if toolRequiresMemberResolution(call.Tool) {
+			candidates, err := ai.ResolveMembers(ctx, s, i.GuildID, call.User)
+			if err != nil {
+				return err
+			}
+			if len(candidates) == 0 {
+				return fmt.Errorf("no members matched %q for action %s", call.User, call.Tool)
+			}
+
+			if len(candidates) == 1 {
+				candidate := candidates[0]
+				call.User = candidate.Member.User.ID
+				call.Confirmation = confirmationMessage(call, candidate)
+			} else {
+				unresolved = append(unresolved, &unresolvedCall{
+					index:      idx,
+					call:       call,
+					candidates: candidates,
+				})
+			}
+		} else {
+			call.Confirmation = ai.ConfirmationText(call, "")
+		}
+	}
+
+	executed := make([]bool, len(calls))
+	outcomes := make([]string, len(calls))
+
+	done := make(chan struct{})
+	var once sync.Once
+	var expired atomic.Bool
+
+	currentUnresolvedIndex := 0
+
+	var activeCandidatesByID map[string]ai.MemberCandidate
+	updateActiveCandidatesByID := func() {
+		if currentUnresolvedIndex < len(unresolved) {
+			item := unresolved[currentUnresolvedIndex]
+			activeCandidatesByID = make(map[string]ai.MemberCandidate, len(item.candidates))
+			for _, candidate := range item.candidates {
+				if candidate.Member == nil || candidate.Member.User == nil {
+					continue
+				}
+				activeCandidatesByID[candidate.Member.User.ID] = candidate
+			}
+		}
+	}
+	updateActiveCandidatesByID()
+
+	const interactiveTimeout = 40 * time.Second
+	timer := time.NewTimer(interactiveTimeout)
+
+	var removeHandler func()
+	removeHandler = s.AddHandler(func(s *discordgo.Session, ic *discordgo.InteractionCreate) {
+		if ic.Type != discordgo.InteractionMessageComponent {
+			return
+		}
+
+		data := ic.MessageComponentData()
+
+		isAcceptAll := data.CustomID == confirmAllID
+		isRejectAll := data.CustomID == rejectAllID
+		isNumBtn := strings.HasPrefix(data.CustomID, numBtnPrefix)
+		isSelect := strings.HasPrefix(data.CustomID, selectPrefix)
+		isPage := strings.HasPrefix(data.CustomID, pagePrefix)
+
+		if !isAcceptAll && !isRejectAll && !isNumBtn && !isSelect && !isPage {
+			return
+		}
+
+		if interactionUserID(ic) != actorID {
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "You cannot confirm or cancel someone else's AI action.",
+					Flags:   discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
+		if expired.Load() {
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &discordgo.InteractionResponseData{
+					Embeds:     []*discordgo.MessageEmbed{embeds.Error("Confirmation Expired", "The AI moderation actions have expired.")},
+					Components: []discordgo.MessageComponent{},
+				},
+			})
+			once.Do(func() {
+				timer.Stop()
+				close(done)
+				removeHandler()
+			})
+			return
+		}
+
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(interactiveTimeout)
+
+		if isRejectAll {
+			var cancelCount int
+			for idx, exec := range executed {
+				if !exec {
+					executed[idx] = true
+					outcomes[idx] = "Cancelled by moderator"
+					cancelCount++
+				}
+			}
+
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &discordgo.InteractionResponseData{
+					Embeds:     []*discordgo.MessageEmbed{multiConfirmationEmbed(calls, executed, outcomes)},
+					Components: []discordgo.MessageComponent{},
+				},
+			})
+
+			notice := "The proposed moderation actions were rejected."
+			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+				Content: &notice,
+			})
+
+			once.Do(func() {
+				timer.Stop()
+				close(done)
+				removeHandler()
+			})
+			return
+		}
+
+		if isSelect {
+			if len(data.Values) == 0 {
+				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: "Select a member before confirming the action.",
+						Flags:   discordgo.MessageFlagsEphemeral,
+					},
+				})
+				return
+			}
+
+			selectedID := data.Values[0]
+			candidate, ok := activeCandidatesByID[selectedID]
+			if !ok {
+				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: "That member is no longer available in this selection flow.",
+						Flags:   discordgo.MessageFlagsEphemeral,
+					},
+				})
+				return
+			}
+
+			item := unresolved[currentUnresolvedIndex]
+			item.call.User = candidate.Member.User.ID
+			item.call.Confirmation = confirmationMessage(item.call, candidate)
+
+			currentUnresolvedIndex++
+			updateActiveCandidatesByID()
+
+			if currentUnresolvedIndex < len(unresolved) {
+				nextItem := unresolved[currentUnresolvedIndex]
+				selectID := selectPrefix + strconv.Itoa(currentUnresolvedIndex)
+				pageStrPrefix := pagePrefix + strconv.Itoa(currentUnresolvedIndex) + "_"
+				embed, components := memberSelectionView(nextItem.call, nextItem.candidates, 0, selectID, pageStrPrefix, rejectAllID)
+
+				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseUpdateMessage,
+					Data: &discordgo.InteractionResponseData{
+						Embeds:     []*discordgo.MessageEmbed{embed},
+						Components: components,
+					},
+				})
+			} else {
+				embed := multiConfirmationEmbed(calls, executed, outcomes)
+				components := multiConfirmationComponents(calls, executed, confirmAllID, rejectAllID, numBtnPrefix)
+				_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseUpdateMessage,
+					Data: &discordgo.InteractionResponseData{
+						Embeds:     []*discordgo.MessageEmbed{embed},
+						Components: components,
+					},
+				})
+			}
+			return
+		}
+
+		if isPage {
+			parts := strings.Split(strings.TrimPrefix(data.CustomID, pagePrefix), "_")
+			if len(parts) < 2 {
+				return
+			}
+			flowIdx, err1 := strconv.Atoi(parts[0])
+			page, err2 := strconv.Atoi(parts[1])
+			if err1 != nil || err2 != nil || flowIdx != currentUnresolvedIndex {
+				return
+			}
+
+			item := unresolved[currentUnresolvedIndex]
+			selectID := selectPrefix + strconv.Itoa(currentUnresolvedIndex)
+			pageStrPrefix := pagePrefix + strconv.Itoa(currentUnresolvedIndex) + "_"
+			embed, components := memberSelectionView(item.call, item.candidates, page, selectID, pageStrPrefix, rejectAllID)
+
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &discordgo.InteractionResponseData{
+					Embeds:     []*discordgo.MessageEmbed{embed},
+					Components: components,
+				},
+			})
+			return
+		}
+
+		if isNumBtn {
+			idxStr := strings.TrimPrefix(data.CustomID, numBtnPrefix)
+			idx, err := strconv.Atoi(idxStr)
+			if err != nil || idx < 0 || idx >= len(calls) || executed[idx] {
+				return
+			}
+
+			call := calls[idx]
+			execErr := func() error {
+				toolCtx, toolCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer toolCancel()
+				return ai.ExecuteTool(toolCtx, s, i.GuildID, i.ChannelID, i.Member, call)
+			}()
+
+			executed[idx] = true
+			if execErr != nil {
+				outcomes[idx] = execErr.Error()
+			}
+
+			allExecuted := true
+			for _, exec := range executed {
+				if !exec {
+					allExecuted = false
+					break
+				}
+			}
+
+			embed := multiConfirmationEmbed(calls, executed, outcomes)
+			var components []discordgo.MessageComponent
+			if allExecuted {
+				components = []discordgo.MessageComponent{}
+			} else {
+				components = multiConfirmationComponents(calls, executed, confirmAllID, rejectAllID, numBtnPrefix)
+			}
+
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &discordgo.InteractionResponseData{
+					Embeds:     []*discordgo.MessageEmbed{embed},
+					Components: components,
+				},
+			})
+
+			if allExecuted {
+				notice := "All proposed moderation actions have been processed."
+				_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+					Content: &notice,
+				})
+				once.Do(func() {
+					timer.Stop()
+					close(done)
+					removeHandler()
+				})
+			}
+			return
+		}
+
+		if isAcceptAll {
+			var failCount int
+
+			for idx, call := range calls {
+				if executed[idx] {
+					continue
+				}
+
+				execErr := func() error {
+					toolCtx, toolCancel := context.WithTimeout(ctx, 15*time.Second)
+					defer toolCancel()
+					return ai.ExecuteTool(toolCtx, s, i.GuildID, i.ChannelID, i.Member, call)
+				}()
+
+				executed[idx] = true
+				if execErr != nil {
+					outcomes[idx] = execErr.Error()
+					failCount++
+				}
+			}
+
+			embed := multiConfirmationEmbed(calls, executed, outcomes)
+			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &discordgo.InteractionResponseData{
+					Embeds:     []*discordgo.MessageEmbed{embed},
+					Components: []discordgo.MessageComponent{},
+				},
+			})
+
+			var finalNotice string
+			if failCount > 0 {
+				finalNotice = "The proposed moderation actions completed with some errors."
+			} else {
+				finalNotice = "All proposed moderation actions have been confirmed and executed."
+			}
+
+			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+				Content: &finalNotice,
+			})
+
+			once.Do(func() {
+				timer.Stop()
+				close(done)
+				removeHandler()
+			})
+			return
+		}
+	})
+
+	var initialEmbed *discordgo.MessageEmbed
+	var initialComponents []discordgo.MessageComponent
+
+	if len(unresolved) > 0 {
+		firstUnresolved := unresolved[0]
+		selectID := selectPrefix + "0"
+		pageStrPrefix := pagePrefix + "0_"
+		initialEmbed, initialComponents = memberSelectionView(firstUnresolved.call, firstUnresolved.candidates, 0, selectID, pageStrPrefix, rejectAllID)
+	} else {
+		initialEmbed = multiConfirmationEmbed(calls, executed, outcomes)
+		initialComponents = multiConfirmationComponents(calls, executed, confirmAllID, rejectAllID, numBtnPrefix)
+	}
+
+	publicNotice := "Moderation actions require private confirmation from the requester."
+	if err := editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+		Content:    &publicNotice,
+		Components: &[]discordgo.MessageComponent{},
+	}); err != nil {
+		removeHandler()
+		timer.Stop()
+		return err
+	}
+
+	if err := sendEphemeralFollowupWithRetry(s, i, initialEmbed, initialComponents); err != nil {
+		removeHandler()
+		timer.Stop()
+		return err
+	}
+
+	lifecycle.Go(func(ctx context.Context) {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			expired.Store(true)
+			for idx, exec := range executed {
+				if !exec {
+					executed[idx] = true
+					outcomes[idx] = "Expired (inactive for 40s)"
+				}
+			}
+
+			embed := multiConfirmationEmbed(calls, executed, outcomes)
+			notice := "The proposed moderation actions have expired."
+			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{
+				Content:    &notice,
+				Embeds:     &[]*discordgo.MessageEmbed{embed},
+				Components: &[]discordgo.MessageComponent{},
+			})
+
+			once.Do(func() {
+				removeHandler()
+			})
+		}
+	})
+
+	return nil
 }

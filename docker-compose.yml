@@ -46,6 +46,7 @@ services:
       - DB_DRIVER=${DB_DRIVER}
       - DB_DSN=${DB_DSN}
       - API_KEY_ENCRYPTION_KEY=${API_KEY_ENCRYPTION_KEY}
+      - WEB_API_TOKEN=${WEB_API_TOKEN}
       - ENV=production
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]

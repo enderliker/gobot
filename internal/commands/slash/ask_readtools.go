@@ -8,45 +8,59 @@ import (
 
 	"gobot/internal/ai"
 	"gobot/internal/database"
-	"gobot/internal/embeds"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-func handleReadTool(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
+// ExecuteReadTool executes a read-only tool and returns its generated embed.
+func ExecuteReadTool(ctx context.Context, s *discordgo.Session, guildID, defaultChannelID string, call *ai.ToolCall) (*discordgo.MessageEmbed, error) {
 	switch call.Tool {
 	case "warnings":
-		return handleWarningsTool(ctx, s, i, call)
+		return executeWarningsTool(ctx, s, guildID, call)
 	case "role_info":
-		return handleRoleInfoTool(s, i, call)
+		return executeRoleInfoTool(s, guildID, call)
 	case "server_info":
-		return handleServerInfoTool(s, i)
+		return executeServerInfoTool(s, guildID)
 	case "channel_info":
-		return handleChannelInfoTool(s, i, call)
+		return executeChannelInfoTool(s, guildID, defaultChannelID, call)
 	case "role_list":
-		return handleRoleListTool(s, i)
+		return executeRoleListTool(s, guildID)
 	case "audit_log":
-		return handleAuditLogTool(s, i, call)
+		return executeAuditLogTool(s, guildID, call)
 	case "voice_status":
-		return handleVoiceStatusTool(s, i)
+		return executeVoiceStatusTool(s, guildID)
+	case "member_info":
+		return executeMemberInfoTool(ctx, s, guildID, call)
 	}
-	return false
+	return nil, fmt.Errorf("unknown read tool: %s", call.Tool)
 }
 
-func handleWarningsTool(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
-	candidates, err := ai.ResolveMembers(ctx, s, i.GuildID, call.User)
+// IsReadTool returns true if the tool is read-only.
+func IsReadTool(toolName string) bool {
+	readOnlyTools := map[string]bool{
+		"member_info":  true,
+		"warnings":     true,
+		"role_info":    true,
+		"server_info":  true,
+		"channel_info": true,
+		"role_list":    true,
+		"audit_log":    true,
+		"voice_status": true,
+		"web_search":   true,
+	}
+	return readOnlyTools[toolName]
+}
+
+func executeWarningsTool(ctx context.Context, s *discordgo.Session, guildID string, call *ai.ToolCall) (*discordgo.MessageEmbed, error) {
+	candidates, err := ai.ResolveMembers(ctx, s, guildID, call.User)
 	if err != nil || len(candidates) == 0 {
-		embed := embeds.Error("Member Not Found", fmt.Sprintf("No members matched %q", call.User))
-		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-		return true
+		return nil, fmt.Errorf("no members matched %q", call.User)
 	}
 
 	target := candidates[0].Member
-	wList, err := database.Default.GetWarnings(i.GuildID, target.User.ID)
+	wList, err := database.Default.GetWarnings(guildID, target.User.ID)
 	if err != nil {
-		embed := embeds.Error("Database Error", fmt.Sprintf("Failed to fetch warnings: %v", err))
-		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-		return true
+		return nil, fmt.Errorf("failed to fetch warnings: %w", err)
 	}
 
 	var desc strings.Builder
@@ -59,25 +73,20 @@ func handleWarningsTool(ctx context.Context, s *discordgo.Session, i *discordgo.
 		}
 	}
 
-	embed := &discordgo.MessageEmbed{
+	return &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("Warnings for %s", target.User.Username),
 		Description: desc.String(),
 		Color:       0xFEE75C, // Yellow
 		Thumbnail: &discordgo.MessageEmbedThumbnail{
 			URL: target.User.AvatarURL("256"),
 		},
-	}
-
-	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-	return true
+	}, nil
 }
 
-func handleRoleInfoTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
-	role, err := ai.ResolveRole(s, i.GuildID, call.RoleID)
+func executeRoleInfoTool(s *discordgo.Session, guildID string, call *ai.ToolCall) (*discordgo.MessageEmbed, error) {
+	role, err := ai.ResolveRole(s, guildID, call.RoleID)
 	if err != nil {
-		embed := embeds.Error("Role Not Found", fmt.Sprintf("No roles matched %q", call.RoleID))
-		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-		return true
+		return nil, fmt.Errorf("no roles matched %q", call.RoleID)
 	}
 
 	colorHex := fmt.Sprintf("#%06X", role.Color)
@@ -85,7 +94,7 @@ func handleRoleInfoTool(s *discordgo.Session, i *discordgo.InteractionCreate, ca
 		colorHex = "Default/None"
 	}
 
-	embed := &discordgo.MessageEmbed{
+	return &discordgo.MessageEmbed{
 		Title:       "Role Information",
 		Description: fmt.Sprintf("Details for role %s", role.Mention()),
 		Color:       role.Color,
@@ -98,20 +107,15 @@ func handleRoleInfoTool(s *discordgo.Session, i *discordgo.InteractionCreate, ca
 			{Name: "Mentionable", Value: strconv.FormatBool(role.Mentionable), Inline: true},
 			{Name: "Permissions Bitmask", Value: strconv.FormatInt(role.Permissions, 10), Inline: false},
 		},
-	}
-
-	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-	return true
+	}, nil
 }
 
-func handleServerInfoTool(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	guild, err := s.State.Guild(i.GuildID)
+func executeServerInfoTool(s *discordgo.Session, guildID string) (*discordgo.MessageEmbed, error) {
+	guild, err := s.State.Guild(guildID)
 	if err != nil || guild == nil {
-		guild, err = s.Guild(i.GuildID)
+		guild, err = s.Guild(guildID)
 		if err != nil {
-			embed := embeds.Error("Error", "Failed to retrieve server information.")
-			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-			return true
+			return nil, fmt.Errorf("failed to retrieve server information: %w", err)
 		}
 	}
 
@@ -121,7 +125,7 @@ func handleServerInfoTool(s *discordgo.Session, i *discordgo.InteractionCreate) 
 		createdAt = fmt.Sprintf("<t:%d:F> (<t:%d:R>)", createdAtTime.Unix(), createdAtTime.Unix())
 	}
 
-	embed := &discordgo.MessageEmbed{
+	return &discordgo.MessageEmbed{
 		Title: guild.Name,
 		Color: 0x5865F2,
 		Thumbnail: &discordgo.MessageEmbedThumbnail{
@@ -136,23 +140,18 @@ func handleServerInfoTool(s *discordgo.Session, i *discordgo.InteractionCreate) 
 			{Name: "Boost Tier", Value: fmt.Sprintf("Tier %d (%d boosts)", guild.PremiumTier, guild.PremiumSubscriptionCount), Inline: true},
 			{Name: "Created At", Value: createdAt, Inline: false},
 		},
-	}
-
-	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-	return true
+	}, nil
 }
 
-func handleChannelInfoTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
+func executeChannelInfoTool(s *discordgo.Session, guildID, defaultChannelID string, call *ai.ToolCall) (*discordgo.MessageEmbed, error) {
 	chRef := call.TargetChannel
 	if chRef == "" {
-		chRef = i.ChannelID
+		chRef = defaultChannelID
 	}
 
-	ch, err := ai.ResolveChannel(s, i.GuildID, chRef)
+	ch, err := ai.ResolveChannel(s, guildID, chRef)
 	if err != nil {
-		embed := embeds.Error("Channel Not Found", fmt.Sprintf("No channels matched %q", chRef))
-		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-		return true
+		return nil, fmt.Errorf("no channels matched %q", chRef)
 	}
 
 	chTypes := map[discordgo.ChannelType]string{
@@ -187,7 +186,7 @@ func handleChannelInfoTool(s *discordgo.Session, i *discordgo.InteractionCreate,
 		}
 	}
 
-	embed := &discordgo.MessageEmbed{
+	return &discordgo.MessageEmbed{
 		Title:       "Channel Information",
 		Description: fmt.Sprintf("Details for channel %s", ch.Mention()),
 		Color:       0x5865F2,
@@ -199,23 +198,18 @@ func handleChannelInfoTool(s *discordgo.Session, i *discordgo.InteractionCreate,
 			{Name: "Slowmode (Seconds)", Value: strconv.Itoa(ch.RateLimitPerUser), Inline: true},
 			{Name: "Topic", Value: topic, Inline: false},
 		},
-	}
-
-	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-	return true
+	}, nil
 }
 
-func handleRoleListTool(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
+func executeRoleListTool(s *discordgo.Session, guildID string) (*discordgo.MessageEmbed, error) {
 	var roles []*discordgo.Role
-	guild, err := s.State.Guild(i.GuildID)
+	guild, err := s.State.Guild(guildID)
 	if err == nil && guild != nil && len(guild.Roles) > 0 {
 		roles = guild.Roles
 	} else {
-		roles, err = s.GuildRoles(i.GuildID)
+		roles, err = s.GuildRoles(guildID)
 		if err != nil {
-			embed := embeds.Error("Error", "Failed to retrieve guild roles.")
-			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-			return true
+			return nil, fmt.Errorf("failed to retrieve guild roles: %w", err)
 		}
 	}
 
@@ -228,17 +222,14 @@ func handleRoleListTool(s *discordgo.Session, i *discordgo.InteractionCreate) bo
 		}
 	}
 
-	embed := &discordgo.MessageEmbed{
+	return &discordgo.MessageEmbed{
 		Title:       "Roles List",
 		Description: sb.String(),
 		Color:       0x5865F2,
-	}
-
-	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-	return true
+	}, nil
 }
 
-func handleAuditLogTool(s *discordgo.Session, i *discordgo.InteractionCreate, call *ai.ToolCall) bool {
+func executeAuditLogTool(s *discordgo.Session, guildID string, call *ai.ToolCall) (*discordgo.MessageEmbed, error) {
 	count := call.Count
 	if count == 0 {
 		count = 5
@@ -247,11 +238,9 @@ func handleAuditLogTool(s *discordgo.Session, i *discordgo.InteractionCreate, ca
 		count = 20
 	}
 
-	logData, err := s.GuildAuditLog(i.GuildID, "", "", 0, count)
+	logData, err := s.GuildAuditLog(guildID, "", "", 0, count)
 	if err != nil {
-		embed := embeds.Error("Permission Denied", fmt.Sprintf("Failed to fetch audit log: %v", err))
-		_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-		return true
+		return nil, fmt.Errorf("failed to fetch audit log: %w", err)
 	}
 
 	var sb strings.Builder
@@ -309,28 +298,22 @@ func handleAuditLogTool(s *discordgo.Session, i *discordgo.InteractionCreate, ca
 		}
 	}
 
-	embed := &discordgo.MessageEmbed{
+	return &discordgo.MessageEmbed{
 		Title:       "Recent Audit Log Entries",
 		Description: sb.String(),
 		Color:       0x5865F2,
-	}
-
-	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-	return true
+	}, nil
 }
 
-func handleVoiceStatusTool(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	guild, err := s.State.Guild(i.GuildID)
+func executeVoiceStatusTool(s *discordgo.Session, guildID string) (*discordgo.MessageEmbed, error) {
+	guild, err := s.State.Guild(guildID)
 	if err != nil || guild == nil {
-		guild, err = s.Guild(i.GuildID)
+		guild, err = s.Guild(guildID)
 		if err != nil {
-			embed := embeds.Error("Error", "Failed to retrieve voice status.")
-			_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-			return true
+			return nil, fmt.Errorf("failed to retrieve voice status: %w", err)
 		}
 	}
 
-	// Map to keep track of channels and their connected members
 	voiceChannels := make(map[string][]string)
 	for _, vs := range guild.VoiceStates {
 		voiceChannels[vs.ChannelID] = append(voiceChannels[vs.ChannelID], vs.UserID)
@@ -348,7 +331,7 @@ func handleVoiceStatusTool(s *discordgo.Session, i *discordgo.InteractionCreate)
 			sb.WriteString(fmt.Sprintf("**🔈 %s (%s)**\n", chName, chID))
 			for _, uID := range userIDs {
 				memberName := uID
-				if m, err := s.GuildMember(i.GuildID, uID); err == nil && m != nil {
+				if m, err := s.GuildMember(guildID, uID); err == nil && m != nil {
 					memberName = m.DisplayName()
 				}
 				sb.WriteString(fmt.Sprintf("  • <@%s> (%s)\n", uID, memberName))
@@ -357,12 +340,85 @@ func handleVoiceStatusTool(s *discordgo.Session, i *discordgo.InteractionCreate)
 		}
 	}
 
-	embed := &discordgo.MessageEmbed{
+	return &discordgo.MessageEmbed{
 		Title:       "Server Voice Status",
 		Description: sb.String(),
 		Color:       0x57F287, // Green
+	}, nil
+}
+
+func executeMemberInfoTool(ctx context.Context, s *discordgo.Session, guildID string, call *ai.ToolCall) (*discordgo.MessageEmbed, error) {
+	candidates, err := ai.ResolveMembers(ctx, s, guildID, call.User)
+	if err != nil || len(candidates) == 0 {
+		return nil, fmt.Errorf("no members matched %q", call.User)
 	}
 
-	_ = editDeferredInteractionResponseWithRetry(s, i, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
-	return true
+	candidate := candidates[0]
+	if candidate.Member == nil || candidate.Member.User == nil {
+		return nil, fmt.Errorf("failed to resolve member details")
+	}
+
+	m := candidate.Member
+	u := m.User
+
+	rolesDesc := "No roles"
+	if len(m.Roles) > 0 {
+		roleMentions := make([]string, len(m.Roles))
+		for idx, rID := range m.Roles {
+			roleMentions[idx] = "<@&" + rID + ">"
+		}
+		rolesDesc = strings.Join(roleMentions, ", ")
+	}
+
+	joinedAt := "Unknown"
+	if !m.JoinedAt.IsZero() {
+		joinedAt = fmt.Sprintf("<t:%d:F> (<t:%d:R>)", m.JoinedAt.Unix(), m.JoinedAt.Unix())
+	}
+
+	createdAtTime, err := discordgo.SnowflakeTimestamp(u.ID)
+	createdAt := "Unknown"
+	if err == nil {
+		createdAt = fmt.Sprintf("<t:%d:F> (<t:%d:R>)", createdAtTime.Unix(), createdAtTime.Unix())
+	}
+
+	return &discordgo.MessageEmbed{
+		Title:       "Member Information",
+		Description: fmt.Sprintf("Information for %s", m.Mention()),
+		Color:       0x5865F2,
+		Thumbnail: &discordgo.MessageEmbedThumbnail{
+			URL: u.AvatarURL("256"),
+		},
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   "Username",
+				Value:  fmt.Sprintf("%s (%s)", u.Username, u.ID),
+				Inline: true,
+			},
+			{
+				Name:   "Nickname / Display Name",
+				Value:  m.DisplayName(),
+				Inline: true,
+			},
+			{
+				Name:   "Is Bot?",
+				Value:  strconv.FormatBool(u.Bot),
+				Inline: true,
+			},
+			{
+				Name:   "Joined Server At",
+				Value:  joinedAt,
+				Inline: false,
+			},
+			{
+				Name:   "Created Account At",
+				Value:  createdAt,
+				Inline: false,
+			},
+			{
+				Name:   "Roles",
+				Value:  rolesDesc,
+				Inline: false,
+			},
+		},
+	}, nil
 }

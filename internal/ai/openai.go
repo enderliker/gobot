@@ -130,11 +130,15 @@ func (o *OpenAI) Ask(ctx context.Context, apiKey, model string, prompt PromptEnv
 
 	message := result.Choices[0].Message
 	if len(message.ToolCalls) > 0 {
-		call, err := ParseToolArgumentsJSON(message.ToolCalls[0].Function.Name, message.ToolCalls[0].Function.Arguments)
-		if err != nil {
-			return nil, sanitizeProviderError(err, apiKey)
+		var toolCalls []*ToolCall
+		for _, tc := range message.ToolCalls {
+			call, err := ParseToolArgumentsJSON(tc.Function.Name, tc.Function.Arguments)
+			if err != nil {
+				return nil, sanitizeProviderError(err, apiKey)
+			}
+			toolCalls = append(toolCalls, call)
 		}
-		return &AskResult{ToolCall: call}, nil
+		return &AskResult{ToolCalls: toolCalls, Text: strings.TrimSpace(message.Content)}, nil
 	}
 
 	return &AskResult{Text: strings.TrimSpace(message.Content)}, nil

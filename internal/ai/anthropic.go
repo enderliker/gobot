@@ -114,6 +114,7 @@ func (a *Anthropic) Ask(ctx context.Context, apiKey, model string, prompt Prompt
 		return nil, sanitizeProviderError(fmt.Errorf("anthropic: no content"), apiKey)
 	}
 
+	var toolCalls []*ToolCall
 	var sb strings.Builder
 	for _, block := range result.Content {
 		if block.Type == "tool_use" {
@@ -121,11 +122,15 @@ func (a *Anthropic) Ask(ctx context.Context, apiKey, model string, prompt Prompt
 			if err != nil {
 				return nil, sanitizeProviderError(err, apiKey)
 			}
-			return &AskResult{ToolCall: call}, nil
+			toolCalls = append(toolCalls, call)
 		}
 		if block.Type == "text" {
 			sb.WriteString(block.Text)
 		}
+	}
+
+	if len(toolCalls) > 0 {
+		return &AskResult{ToolCalls: toolCalls, Text: strings.TrimSpace(sb.String())}, nil
 	}
 
 	return &AskResult{Text: strings.TrimSpace(sb.String())}, nil

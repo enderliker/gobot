@@ -24,7 +24,7 @@ type ToolDefinition struct {
 
 type AskResult struct {
 	Text          string
-	ToolCall      *ToolCall
+	ToolCalls     []*ToolCall
 	ImageData     []byte
 	ImageMimeType string
 }

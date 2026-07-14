@@ -184,6 +184,7 @@ func (g *Gemini) Ask(ctx context.Context, apiKey, model string, prompt PromptEnv
 		return nil, sanitizeProviderError(fmt.Errorf("gemini: no candidates"), apiKey)
 	}
 
+	var toolCalls []*ToolCall
 	var sb strings.Builder
 	for _, part := range result.Candidates[0].Content.Parts {
 		if part.FunctionCall != nil && part.FunctionCall.Name != "" {
@@ -191,11 +192,15 @@ func (g *Gemini) Ask(ctx context.Context, apiKey, model string, prompt PromptEnv
 			if err != nil {
 				return nil, sanitizeProviderError(err, apiKey)
 			}
-			return &AskResult{ToolCall: call}, nil
+			toolCalls = append(toolCalls, call)
 		}
 		if !part.Thought {
 			sb.WriteString(part.Text)
 		}
+	}
+
+	if len(toolCalls) > 0 {
+		return &AskResult{ToolCalls: toolCalls, Text: cleanThoughtTags(sb.String())}, nil
 	}
 
 	return &AskResult{Text: cleanThoughtTags(sb.String())}, nil

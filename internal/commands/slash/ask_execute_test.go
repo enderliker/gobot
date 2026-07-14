@@ -153,10 +153,12 @@ func TestAskExecuteToolCallUsesPublicNoticeAndPrivateConfirmation(t *testing.T) 
 
 	restoreManager := stubAIManager(t, &capturingAskProvider{
 		result: &ai.AskResult{
-			ToolCall: &ai.ToolCall{
-				Tool:   "kick",
-				User:   "Target User",
-				Reason: "spam",
+			ToolCalls: []*ai.ToolCall{
+				{
+					Tool:   "kick",
+					User:   "Target User",
+					Reason: "spam",
+				},
 			},
 		},
 	})
@@ -286,10 +288,12 @@ func TestAskExecuteToolCallFollowupFailureSanitizesPublicError(t *testing.T) {
 
 	restoreManager := stubAIManager(t, &capturingAskProvider{
 		result: &ai.AskResult{
-			ToolCall: &ai.ToolCall{
-				Tool:   "kick",
-				User:   "Target User",
-				Reason: "spam",
+			ToolCalls: []*ai.ToolCall{
+				{
+					Tool:   "kick",
+					User:   "Target User",
+					Reason: "spam",
+				},
 			},
 		},
 	})
@@ -827,5 +831,120 @@ func TestAskExecuteIncludesChannelHistoryContext(t *testing.T) {
 	}
 	if !strings.HasSuffix(prompt.UserPrompt, "Question: Is the sky blue?") {
 		t.Errorf("expected UserPrompt to end with the question, got:\n%s", prompt.UserPrompt)
+	}
+}
+
+func TestAskExecuteMultiToolCallUsesConsolidatedNotice(t *testing.T) {
+	d := newSlashTestDatabase(t)
+	if err := d.SetGuildConfig(testAskGuildID, "secret-api-key", "Capture", "model-1"); err != nil {
+		t.Fatalf("set guild config: %v", err)
+	}
+
+	restoreManager := stubAIManager(t, &capturingAskProvider{
+		result: &ai.AskResult{
+			ToolCalls: []*ai.ToolCall{
+				{
+					Tool:   "kick",
+					User:   "UserA",
+					Reason: "spam",
+				},
+				{
+					Tool:   "kick",
+					User:   "UserB",
+					Reason: "flood",
+				},
+			},
+		},
+	})
+	defer restoreManager()
+
+	restoreLimiter := stubAskLimiterForTest()
+	defer restoreLimiter()
+
+	var auditBuf bytes.Buffer
+	logger := audit.New(&auditBuf, nil)
+	restoreAudit := audit.SetDefaultForTest(logger)
+	defer restoreAudit()
+
+	recorder := &discordRequestRecorder{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.add(t, r)
+
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/callback"):
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/channels/"+testAskChannelID+"/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/guilds/"+testAskGuildID+"/members/search"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"original","content":"","flags":64}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/webhooks/"+testAskAppID+"/"+testAskToken):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"followup-1","content":"","flags":64}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	restoreEndpoints := stubDiscordEndpoints(t, server.URL+"/")
+	defer restoreEndpoints()
+
+	lifecycle.Init()
+	defer func() {
+		lifecycle.Cancel()
+		lifecycle.Wait()
+	}()
+
+	session, err := discordgo.New("Bot test-token")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.Client = server.Client()
+	session.SyncEvents = true
+
+	seedAskGuildState(t, session, []*discordgo.Member{
+		{
+			User:  &discordgo.User{ID: testAskOwnerID, Username: "owner"},
+			Roles: []string{testAskRoleID},
+		},
+		{
+			User:  &discordgo.User{ID: "100000000000000007", Username: "usera", GlobalName: "UserA"},
+			Nick:  "UserA",
+			Roles: []string{testAskRoleID},
+		},
+		{
+			User:  &discordgo.User{ID: "100000000000000008", Username: "userb", GlobalName: "UserB"},
+			Nick:  "UserB",
+			Roles: []string{testAskRoleID},
+		},
+	})
+
+	cmd := registeredSlashCommand(t, "ask")
+	cmd.Execute(session, newAskInteractionForUser(testAskOwnerID, []string{testAskRoleID}, "Kick UserA and UserB"))
+
+	recorder.waitForCount(t, 3)
+
+	lifecycle.Cancel()
+	lifecycle.Wait()
+
+	if err := logger.Close(context.Background()); err != nil {
+		t.Fatalf("close audit logger: %v", err)
+	}
+
+	requests := recorder.snapshot()
+	findDiscordRequest(t, requests, http.MethodPost, "/interactions/"+testAskInteractionID+"/"+testAskToken+"/callback")
+	editOriginal := findDiscordRequest(t, requests, http.MethodPatch, "/webhooks/"+testAskAppID+"/"+testAskToken+"/messages/@original")
+
+	var originalPayload map[string]any
+	if err := json.Unmarshal(editOriginal.Body, &originalPayload); err != nil {
+		t.Fatalf("unmarshal original edit payload: %v", err)
+	}
+	if got := originalPayload["content"]; got != "Moderation actions require private confirmation from the requester." {
+		t.Fatalf("unexpected public notice content: %#v", got)
 	}
 }
