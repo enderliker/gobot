@@ -63,7 +63,7 @@ func init() {
 				return
 			}
 
-			isTester := (cfg.APIKey == ai.TesterAPIKey)
+			isTester := (cfg.APIKey == ai.TesterAPIKey || cfg.APIKey == ai.ProviderTesterAPIKey)
 			if isTester {
 				cfg.Provider = "Gemini"
 				cfg.APIKey = ai.RealTesterAPIKey

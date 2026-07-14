@@ -31,7 +31,12 @@ type AskResult struct {
 }
 
 var TesterAPIKey = os.Getenv("TESTER_API_KEY")
+var ProviderTesterAPIKey = os.Getenv("PROVIDER_TESTER_API_KEY")
 var RealTesterAPIKey = os.Getenv("TESTER_REAL_API_KEY")
+
+func isTesterKey(key string) bool {
+	return (TesterAPIKey != "" && key == TesterAPIKey) || (ProviderTesterAPIKey != "" && key == ProviderTesterAPIKey)
+}
 
 type Manager struct {
 	providers []Provider
@@ -49,7 +54,7 @@ func (d *testerDecorator) Name() string {
 }
 
 func (d *testerDecorator) Validate(ctx context.Context, apiKey string) error {
-	if apiKey == TesterAPIKey {
+	if isTesterKey(apiKey) {
 		gemini := d.manager.Get("Gemini")
 		if gemini == nil {
 			return d.underlying.Validate(ctx, apiKey)
@@ -60,7 +65,7 @@ func (d *testerDecorator) Validate(ctx context.Context, apiKey string) error {
 }
 
 func (d *testerDecorator) ListModels(ctx context.Context, apiKey string) ([]string, error) {
-	if apiKey == TesterAPIKey {
+	if isTesterKey(apiKey) {
 		gemini := d.manager.Get("Gemini")
 		if gemini == nil {
 			return d.underlying.ListModels(ctx, apiKey)
@@ -71,7 +76,7 @@ func (d *testerDecorator) ListModels(ctx context.Context, apiKey string) ([]stri
 }
 
 func (d *testerDecorator) Ask(ctx context.Context, apiKey, model string, prompt PromptEnvelope, tools []ToolDefinition) (*AskResult, error) {
-	if apiKey == TesterAPIKey {
+	if isTesterKey(apiKey) {
 		gemini := d.manager.Get("Gemini")
 		if gemini == nil {
 			return d.underlying.Ask(ctx, apiKey, model, prompt, tools)

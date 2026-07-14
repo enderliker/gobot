@@ -65,6 +65,54 @@ func init() {
 				return
 			}
 
+			isTester := (apiKey == ai.TesterAPIKey || apiKey == ai.ProviderTesterAPIKey)
+			if isTester {
+				var defaultModel string
+				var resolvedProvider string
+				if apiKey == ai.TesterAPIKey {
+					resolvedProvider = "Gemini"
+					defaultModel = "gemini-2.5-flash"
+				} else {
+					resolvedProvider = providerName
+					switch strings.ToLower(providerName) {
+					case "openai":
+						defaultModel = "gpt-4o-mini"
+					case "anthropic":
+						defaultModel = "claude-3-5-sonnet-20241022"
+					case "gemini":
+						defaultModel = "gemini-2.5-flash"
+					case "mistral":
+						defaultModel = "mistral-large-latest"
+					default:
+						defaultModel = "gemini-2.5-flash"
+					}
+				}
+
+				if err := database.Default.SetGuildConfig(i.GuildID, apiKey, resolvedProvider, defaultModel); err != nil {
+					log.Printf("[SETKEY] tester db: %v", err)
+					auditInteraction(i, "config_setkey_requested", "error", map[string]any{
+						"provider": resolvedProvider,
+						"reason":   "database_write_failed",
+					})
+					respond(s, i, embeds.Error("Database Error", "Failed to save configuration."))
+					return
+				}
+
+				auditInteraction(i, "config_setkey_requested", "success", map[string]any{
+					"provider": resolvedProvider,
+					"model":    defaultModel,
+					"tester":   true,
+				})
+
+				testerEmbed := &discordgo.MessageEmbed{
+					Title:       "⚙️ Goby Tester Mode Configured",
+					Description: fmt.Sprintf("Validated and configured key for **%s**.\nModel: `%s` (Tester Mode)\n\n💡 **Note for Reviewers:** Goby is now using the pre-configured tester API key. If you want to test how the bot handles API errors (e.g. invalid or expired keys), you can run `/setkey` with any random characters in the key field.", resolvedProvider, defaultModel),
+					Color:       0x3498db, // Blue
+				}
+				respond(s, i, testerEmbed)
+				return
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 
