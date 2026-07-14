@@ -353,10 +353,22 @@ func showModelPage(s *discordgo.Session, i *discordgo.InteractionCreate, apiKey 
 				"provider": provider.Name(),
 				"model":    selectedModel,
 			})
+
+			var successEmbed *discordgo.MessageEmbed
+			if apiKey == ai.ProviderTesterAPIKey {
+				successEmbed = &discordgo.MessageEmbed{
+					Title:       "⚙️ Goby Tester Mode Configured",
+					Description: fmt.Sprintf("Validated and configured key for **%s**.\nModel: `%s` (Tester Mode)\n\n💡 **Note for Reviewers:** Goby is now using the pre-configured tester API key under the hood. If you want to test how the bot handles API errors (e.g. invalid or expired keys), you can run `/setkey` with any random characters in the key field.", provider.Name(), selectedModel),
+					Color:       0x3498db, // Blue
+				}
+			} else {
+				successEmbed = embeds.KeySet(provider.Name(), selectedModel)
+			}
+
 			_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseUpdateMessage,
 				Data: &discordgo.InteractionResponseData{
-					Embeds:     []*discordgo.MessageEmbed{embeds.KeySet(provider.Name(), selectedModel)},
+					Embeds:     []*discordgo.MessageEmbed{successEmbed},
 					Components: []discordgo.MessageComponent{},
 				},
 			})
