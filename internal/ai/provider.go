@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -29,16 +30,71 @@ type AskResult struct {
 	ImageMimeType string
 }
 
+var TesterAPIKey = os.Getenv("TESTER_API_KEY")
+var RealTesterAPIKey = os.Getenv("TESTER_REAL_API_KEY")
+
 type Manager struct {
 	providers []Provider
 }
 
 var DefaultManager *Manager
 
-func NewManager(providers ...Provider) *Manager {
-	return &Manager{
-		providers: append([]Provider(nil), providers...),
+type testerDecorator struct {
+	underlying Provider
+	manager    *Manager
+}
+
+func (d *testerDecorator) Name() string {
+	return d.underlying.Name()
+}
+
+func (d *testerDecorator) Validate(ctx context.Context, apiKey string) error {
+	if apiKey == TesterAPIKey {
+		gemini := d.manager.Get("Gemini")
+		if gemini == nil {
+			return d.underlying.Validate(ctx, apiKey)
+		}
+		return gemini.Validate(ctx, RealTesterAPIKey)
 	}
+	return d.underlying.Validate(ctx, apiKey)
+}
+
+func (d *testerDecorator) ListModels(ctx context.Context, apiKey string) ([]string, error) {
+	if apiKey == TesterAPIKey {
+		gemini := d.manager.Get("Gemini")
+		if gemini == nil {
+			return d.underlying.ListModels(ctx, apiKey)
+		}
+		return gemini.ListModels(ctx, RealTesterAPIKey)
+	}
+	return d.underlying.ListModels(ctx, apiKey)
+}
+
+func (d *testerDecorator) Ask(ctx context.Context, apiKey, model string, prompt PromptEnvelope, tools []ToolDefinition) (*AskResult, error) {
+	if apiKey == TesterAPIKey {
+		gemini := d.manager.Get("Gemini")
+		if gemini == nil {
+			return d.underlying.Ask(ctx, apiKey, model, prompt, tools)
+		}
+		if !strings.Contains(model, "gemini") {
+			model = "gemini-2.5-flash"
+		}
+		return gemini.Ask(ctx, RealTesterAPIKey, model, prompt, tools)
+	}
+	return d.underlying.Ask(ctx, apiKey, model, prompt, tools)
+}
+
+func NewManager(providers ...Provider) *Manager {
+	m := &Manager{}
+	decorated := make([]Provider, len(providers))
+	for i, p := range providers {
+		decorated[i] = &testerDecorator{
+			underlying: p,
+			manager:    m,
+		}
+	}
+	m.providers = decorated
+	return m
 }
 
 func init() {

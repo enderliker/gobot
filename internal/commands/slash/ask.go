@@ -63,6 +63,15 @@ func init() {
 				return
 			}
 
+			isTester := (cfg.APIKey == ai.TesterAPIKey)
+			if isTester {
+				cfg.Provider = "Gemini"
+				cfg.APIKey = ai.RealTesterAPIKey
+				if !strings.Contains(cfg.Model, "gemini") {
+					cfg.Model = "gemini-2.5-flash"
+				}
+			}
+
 			guildSystem, err := database.Default.GetGuildSystemPrompt(i.GuildID)
 			if err != nil {
 				log.Printf("[ASK] prompt db: %v", err)
@@ -117,6 +126,17 @@ func init() {
 
 				result, err := provider.Ask(ctx, cfg.APIKey, cfg.Model, reqPrompt, reqTools)
 
+				sendTesterNote := func() {
+					if isTester {
+						testerEmbed := &discordgo.MessageEmbed{
+							Title:       "⚙️ Goby Tester Mode",
+							Description: "You are currently using Goby's pre-configured tester API key.\n\n💡 **Tip for Reviewers:** If you want to test how the bot handles API validation/execution errors (e.g. invalid or expired keys), you can run the `/setkey` command and put any random digits or characters in the key field.",
+							Color:       0x3498db, // Blue
+						}
+						_ = sendEphemeralFollowupWithRetry(s, i, testerEmbed, []discordgo.MessageComponent{})
+					}
+				}
+
 				var embed *discordgo.MessageEmbed
 				if err != nil {
 					if ctx.Err() != nil || lifecycle.IsShuttingDown() {
@@ -133,6 +153,7 @@ func init() {
 					}); err != nil {
 						log.Printf("[ASK] original response edit failed after retries: %v", err)
 					}
+					sendTesterNote()
 				} else {
 					if ctx.Err() != nil || lifecycle.IsShuttingDown() {
 						return
@@ -153,6 +174,7 @@ func init() {
 						}); err != nil {
 							log.Printf("[ASK] original response edit with image attachment failed: %v", err)
 						}
+						sendTesterNote()
 						return
 					}
 
@@ -191,12 +213,14 @@ func init() {
 										Components:      &[]discordgo.MessageComponent{},
 										AllowedMentions: allowedMentionsForActor(i),
 									})
+									sendTesterNote()
 									return
 								}
 								answer = sanitizeAssistantVisibleText(answer, reqPrompt)
 								if err := sendAskResponse(ctx, s, i, cfg, answer); err != nil {
 									log.Printf("[ASK] web_search response send failed: %v", err)
 								}
+								sendTesterNote()
 								return
 							}
 
@@ -218,6 +242,7 @@ func init() {
 									AllowedMentions: allowedMentionsForActor(i),
 								})
 							}
+							sendTesterNote()
 							return
 						}
 
@@ -233,6 +258,7 @@ func init() {
 									AllowedMentions: allowedMentionsForActor(i),
 								})
 							}
+							sendTesterNote()
 							return
 						}
 
@@ -250,6 +276,7 @@ func init() {
 									AllowedMentions: allowedMentionsForActor(i),
 								})
 							}
+							sendTesterNote()
 							return
 						}
 					}
@@ -258,6 +285,7 @@ func init() {
 					if err := sendAskResponse(ctx, s, i, cfg, answer); err != nil {
 						log.Printf("[ASK] original response send failed: %v", err)
 					}
+					sendTesterNote()
 				}
 			})
 		},
